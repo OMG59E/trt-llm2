@@ -90,7 +90,31 @@
 
 ### 送分题答案（可选）
 
-如果你做了送分题，请把答案写在这里。
+- 送分题1
+
+```bash
+root@trt2023:~/workspace/tensorrt_llm_july-release-v1/examples/gpt# python3 run.py --max_output_len=8
+Input: Born in north-east France, Soyer trained as a
+Output:  chef and eventually became a chef at a
+root@trt2023:~/workspace/tensorrt_llm_july-release-v1/examples/gpt#
+```
+
+- 送分题2
+
+```bash
+[08/22/2023-09:26:59] [TRT-LLM] [I] TensorRT-LLM (total latency: 3.029069662094116 sec)
+[08/22/2023-09:26:59] [TRT-LLM] [I] TensorRT-LLM beam 0 result
+[08/22/2023-09:26:59] [TRT-LLM] [I]   rouge1 : 21.869322054781037
+[08/22/2023-09:26:59] [TRT-LLM] [I]   rouge2 : 6.258925475911645
+[08/22/2023-09:26:59] [TRT-LLM] [I]   rougeL : 16.755771650012953
+[08/22/2023-09:26:59] [TRT-LLM] [I]   rougeLsum : 18.68034777724496
+[08/22/2023-09:26:59] [TRT-LLM] [I] Hugging Face (total latency: 14.837929248809814 sec)
+[08/22/2023-09:26:59] [TRT-LLM] [I] HF beam 0 result
+[08/22/2023-09:27:00] [TRT-LLM] [I]   rouge1 : 18.182978950152904
+[08/22/2023-09:27:00] [TRT-LLM] [I]   rouge2 : 5.166241888544473
+[08/22/2023-09:27:00] [TRT-LLM] [I]   rougeL : 14.851620358520162
+[08/22/2023-09:27:00] [TRT-LLM] [I]   rougeLsum : 16.95757748412272
+```
 
 ### 经验与体会（可选）
 
