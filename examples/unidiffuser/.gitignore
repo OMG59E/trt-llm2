@@ -3,3 +3,5 @@ __pycache__
 *.bin
 *.pth
 *.trt
+*.jpg
+*.png

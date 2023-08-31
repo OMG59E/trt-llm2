@@ -10,8 +10,8 @@ if hasattr(torch.nn.functional, 'scaled_dot_product_attention'):
     ATTENTION_MODE = 'math'
 else:
     try:
-        import xformers
-        import xformers.ops
+        # import xformers
+        # import xformers.ops
         ATTENTION_MODE = 'xformers'
     except:
         ATTENTION_MODE = 'math'
@@ -79,8 +79,8 @@ class Attention(nn.Module):
         elif ATTENTION_MODE == 'xformers':
             qkv = einops.rearrange(qkv, 'B L (K H D) -> K B L H D', K=3, H=self.num_heads)
             q, k, v = qkv[0], qkv[1], qkv[2]  # B L H D
-            x = xformers.ops.memory_efficient_attention(q, k, v)
-            x = einops.rearrange(x, 'B L H D -> B L (H D)', H=self.num_heads)
+            # x = xformers.ops.memory_efficient_attention(q, k, v)
+            # x = einops.rearrange(x, 'B L H D -> B L (H D)', H=self.num_heads)
         elif ATTENTION_MODE == 'math':
             with torch.amp.autocast(device_type='cuda', enabled=False):
                 qkv = einops.rearrange(qkv, 'B L (K H D) -> K B H L D', K=3, H=self.num_heads).float()

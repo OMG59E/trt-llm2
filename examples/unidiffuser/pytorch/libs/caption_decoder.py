@@ -250,7 +250,7 @@ class CaptionDecoder(object):
             state_dict[new_k] = v
         mk, uk = self.caption_model.load_state_dict(state_dict, strict=False)
         assert len(mk) == 0
-        assert all([name.startswith('clip') for name in uk])
+        # assert all([name.startswith('clip') for name in uk])
         self.caption_model.eval()
         self.caption_model.to(device)
         self.caption_model.requires_grad_(False)

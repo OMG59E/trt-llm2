@@ -232,7 +232,7 @@ def main():
         samples = 0.5 * (autoencoder.decode(z) + 1.) 
         samples = samples.mul(255.).clamp_(0., 255.).permute((0, 2, 3, 1))[:, :, :, [2, 1, 0]].cpu().numpy().astype(np.uint8)
         import cv2
-        cv2.imwrite("112.jpg", samples[0])
+        cv2.imwrite("sample.jpg", samples[0])
     
 if __name__ == "__main__":
     main()
