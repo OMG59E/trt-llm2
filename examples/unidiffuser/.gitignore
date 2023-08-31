@@ -1,0 +1,5 @@
+__pycache__
+*.npy
+*.bin
+*.pth
+*.trt
