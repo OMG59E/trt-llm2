@@ -6,6 +6,9 @@ from tensorrt_llm.functional import Tensor
 from tensorrt_llm.builder import Builder
 from tensorrt_llm.logger import logger
 from tensorrt_llm.network import net_guard
+from tensorrt_llm.module import Module
+from tensorrt_llm.layers import Linear
+
 
 engine_path = "outputs"
 precision = "float16"
@@ -31,7 +34,22 @@ tensorrt_llm_clip = tensorrt_llm.models.CLIPTextTransformer(
         use_return_dict=True, 
         np_dtype=np.float32)
 
+
+class CaptionEncoder(Module):
+    def __init__(self, hidden_dim, dtype) -> None:
+        super().__init__()
+        self.encode_prefix = Linear(768, hidden_dim, dtype=dtype)
+    
+    def forward(self, x):
+        return self.encode_prefix(x)
+    
+tensorrt_llm_caption_encode = CaptionEncoder(64, trt.float32)
+
+
 network = builder.create_network()
+
+tensorrt_llm_caption_encode.encode_prefix.weight.value = np.ascontiguousarray(np.load("weights/encode_prefix.weight.npy"))
+tensorrt_llm_caption_encode.encode_prefix.bias.value = np.ascontiguousarray(np.load("weights/encode_prefix.bias.npy"))
 
 tensorrt_llm_clip.embeddings.position_embedding.weight.value = np.ascontiguousarray(np.load("weights/text_model.embeddings.position_embedding.weight.npy"))
 tensorrt_llm_clip.embeddings.token_embedding.weight.value = np.ascontiguousarray(np.load("weights/text_model.embeddings.token_embedding.weight.npy"))
@@ -59,8 +77,10 @@ for idx in range(num_layers):
 
 with net_guard(network):
     network.set_named_parameters(tensorrt_llm_clip.named_parameters())
+    network.set_named_parameters(tensorrt_llm_caption_encode.named_parameters())
     input_ids = Tensor(name='input_dis', dtype=trt.int32, shape=[1, 77])
     context = tensorrt_llm_clip(input_ids)
+    context = tensorrt_llm_caption_encode(context)
     context.mark_output("context", trt.float32)
 
 engine = builder.build_engine(network, builder_config)
