@@ -1,6 +1,6 @@
 from typing import Tuple
 
-from ..functional import conv2d, conv_transpose2d
+from ..functional import conv2d, conv_transpose2d, Tensor
 from ..module import Module
 from ..parameter import Parameter
 
@@ -44,7 +44,7 @@ class Conv2d(Module):
         else:
             self.register_parameter('bias', None)
 
-    def forward(self, input):
+    def forward(self, input: Tensor) -> Tensor:
         return conv2d(input, self.weight.value,
                       None if self.bias is None else self.bias.value,
                       self.stride, self.padding, self.dilation, self.groups)

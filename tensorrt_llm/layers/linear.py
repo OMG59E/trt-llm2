@@ -66,7 +66,7 @@ class Linear(Module):
         else:
             self.register_parameter('bias', None)
 
-    def forward(self, x):
+    def forward(self, x: Tensor) -> Tensor:
         if default_net().plugin_config.gemm_plugin:
             x = _gemm_plugin(x, self.weight.value, transb=True)
         else:
