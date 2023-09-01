@@ -8,6 +8,7 @@ from tensorrt_llm.logger import logger
 from tensorrt_llm.network import net_guard
 from tensorrt_llm.module import Module
 from tensorrt_llm.layers import Linear
+from models.clip import CLIPTextTransformer
 
 
 engine_path = "outputs"
@@ -21,7 +22,7 @@ tensorrt_llm.logger.set_level("verbose")
 builder = Builder()
 builder_config = builder.create_builder_config(precision=precision)
 
-tensorrt_llm_clip = tensorrt_llm.models.CLIPTextTransformer(
+tensorrt_llm_clip = CLIPTextTransformer(
         hidden_size=768, 
         vocab_size=49408, 
         max_position_embeddings=77, 
@@ -44,7 +45,6 @@ class CaptionEncoder(Module):
         return self.encode_prefix(x)
     
 tensorrt_llm_caption_encode = CaptionEncoder(64, trt.float32)
-
 
 network = builder.create_network()
 
