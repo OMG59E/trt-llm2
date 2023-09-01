@@ -208,24 +208,8 @@ class UViT(nn.Module):
         self.patch_dim = patch_size ** 2 * in_chans
         self.decoder_pred = nn.Linear(embed_dim, self.patch_dim, bias=True)
 
-        trunc_normal_(self.pos_embed, std=.02)
-        self.apply(self._init_weights)
-
         self.token_embedding = nn.Embedding(2, embed_dim)
         self.pos_embed_token = nn.Parameter(torch.zeros(1, 1, embed_dim))
-
-    def _init_weights(self, m):
-        if isinstance(m, nn.Linear):
-            trunc_normal_(m.weight, std=.02)
-            if isinstance(m, nn.Linear) and m.bias is not None:
-                nn.init.constant_(m.bias, 0)
-        elif isinstance(m, nn.LayerNorm):
-            nn.init.constant_(m.bias, 0)
-            nn.init.constant_(m.weight, 1.0)
-
-    @torch.jit.ignore
-    def no_weight_decay(self):
-        return {'pos_embed'}
 
     def forward(self, img, clip_img, text, t_img, t_text, data_type):
         _, _, H, W = img.shape

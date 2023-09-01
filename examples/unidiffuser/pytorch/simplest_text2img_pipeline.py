@@ -53,17 +53,10 @@ def combine(z, clip_img):
     return torch.concat([z, clip_img], dim=-1)
     
 
-def t2i_nnet(x, timesteps, text, nnet, N):  # text is the low dimension version of the text clip embedding
+def t2i_nnet(x, timesteps, text, text_N, nnet, N):  # text is the low dimension version of the text clip embedding
     z, clip_img = split(x)
     t_text = torch.zeros(timesteps.size(0), dtype=torch.int, device=device)
     data_type = torch.zeros_like(t_text, device=device, dtype=torch.int) + 1
-    # z_out, clip_img_out, text_out = nnet(z, clip_img, text=text, t_img=timesteps, t_text=t_text, data_type=data_type)
-    # x_out = combine(z_out, clip_img_out)
-    # if scale == 0.:
-    #     return x_out
-    text_N = torch.randn_like(text)  # 3 other possible choices
-    # z_out_uncond, clip_img_out_uncond, text_out_uncond = nnet(z, clip_img, text=text_N, t_img=timesteps, t_text=torch.ones_like(timesteps) * N, data_type=data_type)
-    # x_out_uncond = combine(z_out_uncond, clip_img_out_uncond)
 
     _z = torch.cat([z, z], dim=0)
     _clip_img = torch.cat([clip_img, clip_img], dim=0)
@@ -78,7 +71,8 @@ def t2i_nnet(x, timesteps, text, nnet, N):  # text is the low dimension version 
 
 def model_fn(x, t, ns, contexts, nnet, N):
     alpha_t, sigma_t = ns.marginal_alpha(t), ns.marginal_std(t)
-    noise = t2i_nnet(x, t * N, contexts, nnet, N)
+    text_N = torch.randn_like(contexts)
+    noise = t2i_nnet(x, t * N, contexts, text_N, nnet, N)
     dims = len(x.shape) - 1
     x0 = (x - sigma_t[(...,) + (None,)*dims] * noise) / alpha_t[(...,) + (None,)*dims]
     return x0
