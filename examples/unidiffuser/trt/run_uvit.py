@@ -60,12 +60,12 @@ def model_fn(x, t):
     cudart.cudaMemcpy(contexts_data_ptr, clip.outputs[0]["tensor"].data_ptr(), contexts_data_size, cudart.cudaMemcpyKind.cudaMemcpyDeviceToDevice)
     cudart.cudaMemcpy(text_N_data_ptr, text_N.data_ptr(), text_N_data_size, cudart.cudaMemcpyKind.cudaMemcpyDeviceToDevice)
     uvit.infer()
-    print(uvit.outputs[0]["name"], uvit.outputs[0]["tensor"].cpu().numpy())
-    exit(-1)
+    noise = uvit.outputs[0]["tensor"]
     alpha_t, sigma_t = noise_schedule.marginal_alpha(t), noise_schedule.marginal_std(t)
     dims = len(x.shape) - 1
     x0 = (x - sigma_t[(...,) + (None,)*dims] * noise) / alpha_t[(...,) + (None,)*dims]
     return x0
+
 
 def dpm_solver_first_update(x, s, t):
     dims = len(x.shape) - 1
