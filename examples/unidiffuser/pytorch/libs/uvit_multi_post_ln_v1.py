@@ -87,7 +87,6 @@ class Attention(nn.Module):
                 q, k, v = qkv[0], qkv[1], qkv[2]  # B H L D
                 attn = (q @ k.transpose(-2, -1)) * self.scale
                 attn = attn.softmax(dim=-1)
-                attn = self.attn_drop(attn)
                 x = (attn @ v).transpose(1, 2).reshape(B, L, C)
         else:
             raise NotImplemented
@@ -114,21 +113,13 @@ class Block(nn.Module):
         self.use_checkpoint = use_checkpoint
 
     def forward(self, x, skip=None):
-        if self.use_checkpoint:
-            return torch.utils.checkpoint.checkpoint(self._forward, x, skip)
-        else:
-            return self._forward(x, skip)
-
-    def _forward(self, x, skip=None):
         if self.skip_linear is not None:
             x = self.skip_linear(torch.cat([x, skip], dim=-1))
             x = self.norm1(x)
-        x = x + self.drop_path(self.attn(x))
+        x = x + self.attn(x)
         x = self.norm2(x)
-
-        x = x + self.drop_path(self.mlp(x))
+        x = x + self.mlp(x)
         x = self.norm3(x)
-
         return x
 
 
@@ -240,20 +231,14 @@ class UViT(nn.Module):
             pos_embed = torch.cat((pos_embed_others, pos_embed_patches), dim=1)
 
         x = x + pos_embed
-        x = self.pos_drop(x)
-
         skips = []
         for blk in self.in_blocks:
             x = blk(x)
             skips.append(x)
-
         x = self.mid_block(x)
-
         for blk in self.out_blocks:
             x = blk(x, skips.pop())
-
         x = self.norm(x)
-
         t_img_token_out, t_text_token_out, token_embed_out, text_out, clip_img_out, img_out = x.split((1, 1, 1, num_text_tokens, 1, num_img_tokens), dim=1)
 
         img_out = self.decoder_pred(img_out)
