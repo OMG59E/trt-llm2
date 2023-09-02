@@ -15,7 +15,7 @@ torch.manual_seed(seed)
 torch.cuda.manual_seed_all(seed)
 
 engine_path = "outputs"
-precision = "float16"
+precision = "float32"
 engine_name = "uvit_{}.trt".format(precision)
 if not os.path.exists(engine_path):
     os.makedirs(engine_path)

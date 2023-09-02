@@ -1,5 +1,7 @@
 import os
 import sys
+import cv2
+import numpy as np
 import torch
 import einops
 from cuda import cudart
@@ -9,31 +11,29 @@ sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 from pytorch.dpm_solver_pp import NoiseScheduleVP
 
 
+prompts = ["a dog under the sea"]
 device = 'cuda'
 n_samples = 1
 seed = 1234
 z_shape = (4, 64, 64)
 clip_img_dim = 512
-clip_text_dim = 768
-text_dim = 64  # reduce dimension
 sample_steps = 50
-scale = 7.
-t2i_cfg_mode = "true_uncond"
-contexts_low_dim = 64
 
 torch.manual_seed(seed)
 torch.cuda.manual_seed_all(seed)
 
+clip = TRTInfer("outputs/clip_float16.trt")
+uvit = TRTInfer("outputs/uvit_float16.trt")
+decoder = TRTInfer("outputs/decoder_float32.trt")
+
+
 _betas = torch.linspace(0.00085 ** 0.5, 0.0120 ** 0.5, 1000, dtype=torch.float32) ** 2
 N = len(_betas)
-
-prompts = ["a dog under the sea"]
 
 # step1
 tokenizer = CLIPTokenizer.from_pretrained("openai/clip-vit-large-patch14")
 batch_encoding = tokenizer(prompts, truncation=True, max_length=77, return_length=True, return_overflowing_tokens=False, padding="max_length", return_tensors="pt")
 input_ids = batch_encoding["input_ids"].type(torch.int32).contiguous().cuda()
-clip = TRTInfer("outputs/clip_float16.trt")
 clip_input_data_ptr = clip.inputs[0]["tensor"].data_ptr()
 clip_input_data_size = clip.inputs[0]["size"]
 cudart.cudaMemcpy(clip_input_data_ptr, input_ids.data_ptr(), clip_input_data_size, cudart.cudaMemcpyKind.cudaMemcpyDeviceToDevice)
@@ -41,8 +41,6 @@ clip.infer()
 
 # step2
 noise_schedule = NoiseScheduleVP(schedule='discrete', betas=torch.tensor(_betas, device=device).float())
-
-uvit = TRTInfer("outputs/uvit_float32.trt")
 x_data_ptr = uvit.inputs[0]["tensor"].data_ptr()
 x_data_size = uvit.inputs[0]["size"]
 ts_data_ptr = uvit.inputs[1]["tensor"].data_ptr()
@@ -53,10 +51,10 @@ text_N_data_ptr = uvit.inputs[3]["tensor"].data_ptr()
 text_N_data_size = uvit.inputs[3]["size"]
 
 def model_fn(x, t):
-    text_N = torch.randn_like(clip.outputs[0]["tensor"]).type(torch.float32).cuda()
+    text_N = torch.randn_like(clip.outputs[0]["tensor"]).type(torch.float32).contiguous().cuda()
     ts = t * N
-    cudart.cudaMemcpy(x_data_ptr, x.data_ptr(), x_data_size, cudart.cudaMemcpyKind.cudaMemcpyDeviceToDevice)
-    cudart.cudaMemcpy(ts_data_ptr, ts.data_ptr(), ts_data_size, cudart.cudaMemcpyKind.cudaMemcpyDeviceToDevice)
+    cudart.cudaMemcpy(x_data_ptr, x.contiguous().data_ptr(), x_data_size, cudart.cudaMemcpyKind.cudaMemcpyDeviceToDevice)
+    cudart.cudaMemcpy(ts_data_ptr, ts.contiguous().data_ptr(), ts_data_size, cudart.cudaMemcpyKind.cudaMemcpyDeviceToDevice)
     cudart.cudaMemcpy(contexts_data_ptr, clip.outputs[0]["tensor"].data_ptr(), contexts_data_size, cudart.cudaMemcpyKind.cudaMemcpyDeviceToDevice)
     cudart.cudaMemcpy(text_N_data_ptr, text_N.data_ptr(), text_N_data_size, cudart.cudaMemcpyKind.cudaMemcpyDeviceToDevice)
     uvit.infer()
@@ -159,7 +157,18 @@ for order in orders:
         raise ValueError("Solver order must be 1 or 2 or 3, got {}".format(order))
     i += order
 
+
+print(x.shape)
 C, H, W = z_shape
 z_dim = C * H * W
-z, clip_img = x.split([z_dim, clip_img_dim], dim=1)
+z, _ = x.split([z_dim, clip_img_dim], dim=1)
 z = einops.rearrange(z, 'B (C H W) -> B C H W', C=C, H=H, W=W)
+
+# decoder
+z_data_ptr = decoder.inputs[0]["tensor"].data_ptr()
+z_data_size = decoder.inputs[0]["size"]
+cudart.cudaMemcpy(z_data_ptr, z.contiguous().data_ptr(), z_data_size, cudart.cudaMemcpyKind.cudaMemcpyDeviceToDevice)
+decoder.infer()
+samples = decoder.outputs[0]["tensor"].cpu().numpy()
+cv2.imwrite("sample.jpg", samples[0])
+

@@ -132,7 +132,7 @@ def unpatchify(x: Tensor, in_chans) -> Tensor:
 
 
 class UViT(Module):
-    def __init__(self, img_size, in_chans, patch_size, embed_dim=768, depth=12, num_heads=12, 
+    def __init__(self, img_size=64, in_chans=4, patch_size=2, embed_dim=1536, depth=30, num_heads=24, 
                  mlp_ratio=4., qkv_bias=False, qk_scale=None, norm_layer=LayerNorm, 
                  mlp_time_embed=False, text_dim=None, num_text_tokens=None, clip_img_dim=None, np_dtype=np.float32):
         super().__init__()
@@ -218,9 +218,7 @@ class UViT(Module):
 
         for blk in self.out_blocks:
             x = blk(x, skips.pop())
-              
         x = self.norm(x)
-
         t_img_token_out, t_text_token_out, token_embed_out, text_out, clip_img_out, img_out = x.split([1, 1, 1, num_text_tokens, 1, num_img_tokens], dim=1)
         
         img_out = self.decoder_pred(img_out)
