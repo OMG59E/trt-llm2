@@ -12,7 +12,7 @@ from models.decoder import Decoder
 
 
 engine_path = "outputs"
-precision = "float32"
+precision = "float16"
 engine_name = "decoder_{}.trt".format(precision)
 if not os.path.exists(engine_path):
     os.makedirs(engine_path)

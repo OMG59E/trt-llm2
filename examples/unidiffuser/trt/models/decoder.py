@@ -2,6 +2,7 @@ import math
 import torch
 import numpy as np
 import tensorrt as trt
+from plugin import GroupNormLayer
 from tensorrt_llm.parameter import Tensor, constant, Parameter
 from tensorrt_llm.functional import matmul, softmax, silu, clip, gelu, concat, cos, sin, unsqueeze, interpolate, select, gather, tanh
 from tensorrt_llm.layers import LayerNorm, Embedding, Linear, Conv2d, GroupNorm
@@ -31,12 +32,13 @@ class ResnetBlock(Module):
         self.out_channels = out_channels
         self.use_conv_shortcut = conv_shortcut
 
-        self.norm1 = GroupNorm(32, in_channels, dtype=dtype)
+        # self.norm1 = GroupNorm(32, in_channels, eps=1e-6, affine=True, dtype=dtype)
+        self.norm1 = GroupNormLayer(32, in_channels, epsilon=1e-6, bSwish=1, dtype=dtype)
         self.conv1 = Conv2d(in_channels, out_channels, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), dtype=dtype)
         if temb_channels > 0:
             self.temb_proj = Linear(temb_channels, out_channels, dtype=dtype)
-        self.norm2 = GroupNorm(32, out_channels, dtype=dtype)
-        
+        # self.norm2 = GroupNorm(32, out_channels, eps=1e-6, affine=True, dtype=dtype)
+        self.norm2 = GroupNormLayer(32, out_channels, epsilon=1e-6, bSwish=1, dtype=dtype)
         self.conv2 = Conv2d(out_channels, out_channels, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), dtype=dtype)
         if self.in_channels != self.out_channels:
             if self.use_conv_shortcut:
@@ -47,14 +49,14 @@ class ResnetBlock(Module):
     def forward(self, x, temb):
         h = x
         h = self.norm1(h)
-        h = silu(h)
+        # h = silu(h)
         h = self.conv1(h)
 
         if temb is not None:
             h = h + unsqueeze(unsqueeze(self.temb_proj(silu(temb)), axis=2), axis=3)
 
         h = self.norm2(h)
-        h = silu(h)
+        # h = silu(h)
         h = self.conv2(h)
 
         if self.in_channels != self.out_channels:
@@ -69,7 +71,8 @@ class AttnBlock(Module):
     def __init__(self, in_channels, dtype=None):
         super().__init__()
         self.in_channels = in_channels
-        self.norm = GroupNorm(32, in_channels, dtype=dtype)
+        # self.norm = GroupNorm(32, in_channels, eps=1e-6, affine=True, dtype=dtype)
+        self.norm = GroupNormLayer(32, in_channels, epsilon=1e-6, bSwish=0, dtype=dtype)
         self.q = Conv2d(in_channels, in_channels, kernel_size=(1, 1), stride=(1, 1), padding=(0, 0), dtype=dtype)
         self.k = Conv2d(in_channels, in_channels, kernel_size=(1, 1), stride=(1, 1), padding=(0, 0), dtype=dtype)
         self.v = Conv2d(in_channels, in_channels, kernel_size=(1, 1), stride=(1, 1), padding=(0, 0), dtype=dtype)
@@ -157,7 +160,8 @@ class Decoder(Module):
         self.up = ModuleList(self.up)
 
         # end
-        self.norm_out = GroupNorm(32, block_in, dtype=self.dtype)
+        # self.norm_out = GroupNorm(32, block_in, eps=1e-6, affine=True, dtype=self.dtype)
+        self.norm_out = GroupNormLayer(32, block_in, epsilon=1e-6, bSwish=1, dtype=self.dtype)
         self.conv_out = Conv2d(block_in, out_ch, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), dtype=self.dtype)
 
     def forward(self, z: Tensor) -> Tensor:
@@ -194,7 +198,7 @@ class Decoder(Module):
             return h
 
         h = self.norm_out(h)
-        h = silu(h)
+        # h = silu(h)
         h = self.conv_out(h)
         if self.tanh_out:
             h = tanh(h)

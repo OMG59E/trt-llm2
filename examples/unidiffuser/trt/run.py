@@ -7,6 +7,7 @@ import einops
 from cuda import cudart
 from trt_infer import TRTInfer
 from transformers import CLIPTokenizer
+from plugin import GroupNormLayer
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 from pytorch.dpm_solver_pp import NoiseScheduleVP
 
@@ -24,7 +25,7 @@ torch.cuda.manual_seed_all(seed)
 
 clip = TRTInfer("outputs/clip_float16.trt")
 uvit = TRTInfer("outputs/uvit_float16.trt")
-decoder = TRTInfer("outputs/decoder_float32.trt")
+decoder = TRTInfer("outputs/decoder_float16.trt")
 
 
 _betas = torch.linspace(0.00085 ** 0.5, 0.0120 ** 0.5, 1000, dtype=torch.float32) ** 2
@@ -58,28 +59,25 @@ def model_fn(x, t):
     cudart.cudaMemcpy(contexts_data_ptr, clip.outputs[0]["tensor"].data_ptr(), contexts_data_size, cudart.cudaMemcpyKind.cudaMemcpyDeviceToDevice)
     cudart.cudaMemcpy(text_N_data_ptr, text_N.data_ptr(), text_N_data_size, cudart.cudaMemcpyKind.cudaMemcpyDeviceToDevice)
     uvit.infer()
-    noise = uvit.outputs[0]["tensor"]
+    noise = uvit.outputs[0]["tensor"]  # bs, 16896 (4*64*64 + 512)
     alpha_t, sigma_t = noise_schedule.marginal_alpha(t), noise_schedule.marginal_std(t)
-    dims = len(x.shape) - 1
-    x0 = (x - sigma_t[(...,) + (None,)*dims] * noise) / alpha_t[(...,) + (None,)*dims]
+    x0 = (x - sigma_t * noise) / alpha_t
     return x0
 
 
 def dpm_solver_first_update(x, s, t):
-    dims = len(x.shape) - 1
     lambda_s, lambda_t = noise_schedule.marginal_lambda(s), noise_schedule.marginal_lambda(t)
     h = lambda_t - lambda_s
     log_alpha_s, log_alpha_t = noise_schedule.marginal_log_mean_coeff(s), noise_schedule.marginal_log_mean_coeff(t)
     sigma_s, sigma_t = noise_schedule.marginal_std(s), noise_schedule.marginal_std(t)
     alpha_t = torch.exp(log_alpha_t)
-    phi_1 = (torch.exp(-h) - 1.) / (-1.)
+    phi_1 = 1. - torch.exp(-h)
     noise_s = model_fn(x, s)
-    x_t = ((sigma_t / sigma_s)[(...,) + (None,)*dims] * x + (alpha_t * phi_1)[(...,) + (None,)*dims] * noise_s)
+    x_t = (sigma_t / sigma_s) * x + (alpha_t * phi_1) * noise_s
     return x_t
 
 
 def dpm_solver_second_update(x, s, t, r1):
-    dims = len(x.shape) - 1
     lambda_s, lambda_t = noise_schedule.marginal_lambda(s), noise_schedule.marginal_lambda(t)
     h = lambda_t - lambda_s
     lambda_s1 = lambda_s + r1 * h
@@ -90,14 +88,13 @@ def dpm_solver_second_update(x, s, t, r1):
     phi_11 = torch.expm1(-r1 * h)
     phi_1 = torch.expm1(-h)
     noise_s = model_fn(x, s)
-    x_s1 = ((sigma_s1 / sigma_s)[(...,) + (None,)*dims] * x - (alpha_s1 * phi_11)[(...,) + (None,)*dims] * noise_s)
+    x_s1 = (sigma_s1 / sigma_s) * x - (alpha_s1 * phi_11) * noise_s
     noise_s1 = model_fn(x_s1, s1)
-    x_t = ((sigma_t / sigma_s)[(...,) + (None,)*dims] * x - (alpha_t * phi_1)[(...,) + (None,)*dims] * noise_s - (0.5 / r1) * (alpha_t * phi_1)[(...,) + (None,)*dims] * (noise_s1 - noise_s))
+    x_t = (sigma_t / sigma_s) * x - (alpha_t * phi_1) * noise_s - (0.5 / r1) * (alpha_t * phi_1) * (noise_s1 - noise_s)
     return x_t
 
 
 def dpm_solver_third_update(x, s, t, r1, r2):
-    dims = len(x.shape) - 1
     lambda_s, lambda_t = noise_schedule.marginal_lambda(s), noise_schedule.marginal_lambda(t)
     h = lambda_t - lambda_s
     lambda_s1 = lambda_s + r1 * h
@@ -113,11 +110,11 @@ def dpm_solver_third_update(x, s, t, r1, r2):
     phi_22 = torch.expm1(-r2 * h) / (r2 * h) + 1.
     phi_2 = phi_1 / h + 1.
     noise_s = model_fn(x, s)
-    x_s1 = ((sigma_s1 / sigma_s)[(...,) + (None,)*dims] * x - (alpha_s1 * phi_11)[(...,) + (None,)*dims] * noise_s)
+    x_s1 = (sigma_s1 / sigma_s) * x - (alpha_s1 * phi_11) * noise_s
     noise_s1 = model_fn(x_s1, s1)
-    x_s2 = ((sigma_s2 / sigma_s)[(...,) + (None,)*dims] * x - (alpha_s2 * phi_12)[(...,) + (None,)*dims] * noise_s + r2 / r1 * (alpha_s2 * phi_22)[(...,) + (None,)*dims] * (noise_s1 - noise_s))
+    x_s2 = (sigma_s2 / sigma_s) * x - (alpha_s2 * phi_12) * noise_s + r2 / r1 * (alpha_s2 * phi_22) * (noise_s1 - noise_s)
     noise_s2 = model_fn(x_s2, s2)
-    x_t = ((sigma_t / sigma_s)[(...,) + (None,)*dims] * x - (alpha_t * phi_1)[(...,) + (None,)*dims] * noise_s + (1. / r2) * (alpha_t * phi_2)[(...,) + (None,)*dims] * (noise_s2 - noise_s))
+    x_t = (sigma_t / sigma_s) * x - (alpha_t * phi_1) * noise_s + (1. / r2) * (alpha_t * phi_2) * (noise_s2 - noise_s)
     return x_t
 
 
@@ -158,7 +155,6 @@ for order in orders:
     i += order
 
 
-print(x.shape)
 C, H, W = z_shape
 z_dim = C * H * W
 z, _ = x.split([z_dim, clip_img_dim], dim=1)
