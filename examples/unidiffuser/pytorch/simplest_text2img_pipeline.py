@@ -1,15 +1,14 @@
 import torch
-import utils
 import cv2
 import time
 import einops
 import numpy as np
 import libs.autoencoder
 import libs.clip
-from torchvision.utils import save_image
 from libs.caption_decoder import CaptionDecoder
 from transformers import CLIPTokenizer, CLIPTextModel
 from dpm_solver_pp import NoiseScheduleVP
+from libs.uvit_multi_post_ln_v1 import UViT
 
 
 class UnidiffuserText2ImgTorch(object):
@@ -25,7 +24,6 @@ class UnidiffuserText2ImgTorch(object):
         self.t2i_cfg_mode = "true_uncond"
 
         nnet_dict = {
-            "name": 'uvit_multi_post_ln_v1',
             "img_size": 64,
             "in_chans": 4,
             "patch_size":2,
@@ -43,7 +41,7 @@ class UnidiffuserText2ImgTorch(object):
             "clip_img_dim": 512,
             "use_checkpoint": False
         }
-        self.nnet = utils.get_nnet(**nnet_dict)
+        self.nnet = UViT(**nnet_dict)
         self.nnet.load_state_dict(torch.load("models/uvit_v1.pth", map_location='cpu'))
         self.nnet.to(self.device)
         self.nnet.eval()
