@@ -198,10 +198,11 @@ class UnidiffuserText2ImgTRT(object):
         return self.decoder.outputs[0]["tensor"].cpu().numpy()
         
         
-m = UnidiffuserText2ImgTRT()
-for idx in range(50):
-    t_start = time.time()
-    samples = m.process(prompt="a dog under the sea", seed=29764)
-    print(idx, "end2end {:.3f}ms".format((time.time() - t_start) * 1000))
-cv2.imwrite("sample.jpg", samples[0])
+if __name__ == "__main__":           
+    m = UnidiffuserText2ImgTRT()
+    for idx in range(50):
+        t_start = time.time()
+        samples = m.process(prompt="a dog under the sea", seed=29764)
+        print(idx, "end2end {:.3f}ms".format((time.time() - t_start) * 1000))
+    cv2.imwrite("sample_trt.jpg", samples[0])
 

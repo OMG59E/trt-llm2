@@ -207,10 +207,11 @@ class UnidiffuserText2ImgTorch(object):
             return samples
 
 
-m = UnidiffuserText2ImgTorch()
-for idx in range(1):
-    t_start = time.time()
-    samples = m.process(prompt="a dog under the sea", seed=29764)
-    print(idx, "end2end {:.3f}ms".format((time.time() - t_start) * 1000))
-cv2.imwrite("sample.jpg", samples[0])
+if __name__ == "__main__":  
+    m = UnidiffuserText2ImgTorch()
+    for idx in range(50):
+        t_start = time.time()
+        samples = m.process(prompt="a dog under the sea", seed=29764)
+        print(idx, "end2end {:.3f}ms".format((time.time() - t_start) * 1000))
+    cv2.imwrite("sample_torch.jpg", samples[0])
 
