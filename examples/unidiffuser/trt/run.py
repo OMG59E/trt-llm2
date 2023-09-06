@@ -186,18 +186,13 @@ class UnidiffuserText2ImgTRT(object):
             else:
                 raise ValueError("Solver order must be 1 or 2 or 3, got {}".format(order))
             i += order
-
-        C, H, W = self.z_shape
-        z_dim = C * H * W
-        z, _ = x.split([z_dim, self.clip_img_dim], dim=1)
-        z = einops.rearrange(z, 'B (C H W) -> B C H W', C=C, H=H, W=W)
         print("all uvit: {:.3f}ms".format((time.time() - t_start) * 1000))
 
         # decoder
         t_start = time.time()
         z_data_ptr = self.decoder.inputs[0]["tensor"].data_ptr()
         z_data_size = self.decoder.inputs[0]["size"]
-        cudart.cudaMemcpy(z_data_ptr, z.contiguous().data_ptr(), z_data_size, cudart.cudaMemcpyKind.cudaMemcpyDeviceToDevice)
+        cudart.cudaMemcpy(z_data_ptr, x.contiguous().data_ptr(), z_data_size, cudart.cudaMemcpyKind.cudaMemcpyDeviceToDevice)
         self.decoder.infer()
         print("decoder: {:.3f}ms".format((time.time() - t_start) * 1000))
         return self.decoder.outputs[0]["tensor"].cpu().numpy()
@@ -205,7 +200,7 @@ class UnidiffuserText2ImgTRT(object):
         
 if __name__ == "__main__":           
     m = UnidiffuserText2ImgTRT()
-    for idx in range(1):
+    for idx in range(50):
         t_start = time.time()
         samples = m.process(prompt="a dog under the sea", seed=29764)
         print(idx, "end2end {:.3f}ms".format((time.time() - t_start) * 1000))
