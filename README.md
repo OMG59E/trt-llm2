@@ -27,17 +27,42 @@
     - 如果是优化新模型，原始模型的名称及链接，并对该模型做个简要介绍
 - 优化效果（例如给出精度和加速比），简单给出关键的数字即可，在这里不必详细展开
 - 在Docker里面代码编译、运行步骤的完整说明
-  - 请做到只要逐行运行你给的命令，就能把代码跑起来
+
+```shell
+git clone https://gitee.com/xingwg/trt-llm2.git
+cd trt-llm2/examples/unidiffuser/trt
+python hf_unidiffuser_convert.py   # 预先将模型下载到trt-llm2/examples/unidiffuser/pytorch/models
+python build_clip.py   # 编译CLIP fp16
+python build_uvit.py  # 编译UViT fp16
+cd plugin && mkdir -p build && cd build && cmake -DCMAKE_BUILD_TYPE=Release ..
+cd ../../ && python build_decoder.py
+python run.py
+```
 
 ### 主要开发工作
 
+Unidiffuser模型的"文生图"任务共包含4个模型，分别是:
+
+- clip - [https://huggingface.co/openai/clip-vit-large-patch14](https://huggingface.co/openai/clip-vit-large-patch14)(代码自行下载，无需手动)
+- caption_decoder - [https://huggingface.co/thu-ml/unidiffuser-v1/blob/main/caption_decoder.pth](https://huggingface.co/thu-ml/unidiffuser-v1/blob/main/caption_decoder.pth)
+- uvit - [https://huggingface.co/thu-ml/unidiffuser-v1/blob/main/uvit_v1.pth](https://huggingface.co/thu-ml/unidiffuser-v1/blob/main/uvit_v1.pth)
+- autoencoder - [https://huggingface.co/thu-ml/unidiffuser-v1/blob/main/autoencoder_kl.pth](https://huggingface.co/thu-ml/unidiffuser-v1/blob/main/autoencoder_kl.pth)
+
+"文生图"任务的整个流程包括三步如下：
+
+<div align=center>
+
+<img src=docs/whiteboard_exported_image.png width=70% />
+
+</div>
+
 #### 开发工作的难点
 
-对于没有任何大语言模型经验的玩家，对TensorRT-LLM可谓是一脸懵，
+本次通过TRT-LLM手动搭建了三个模型分别是CLIP(内联了caption_decoder部分)、UViT、以及autoencoder中的decoder部分，三个模型的主要主要算子是embedding、attention、layernorm、mlp、linear、groupnorm构成。
 
-请在这一节里总结你的工作难点与亮点。
-- 如果使用 TensorRT 进行优化，请介绍一下在模型在导出时、或用polygraphy/trtexec解析时，或在使用TensorRT中，遇到了什么问题并解决了。换句话说，针对这个模型，我们为什么需要额外的工程手段。
-- 如果使用 TensorRT-LLM 进行优化，描述以下方面可供选手参考：如果搭建了新模型， 请介绍模型结构有无特别之处，在模型的搭建过程中使用了什么算子，有没有通过plugin支持的新算子。如果支持新feature，请介绍这个feature具体需要修改哪些模块才能实现。如果优化已有模型，请介绍模型性能瓶颈以及解决方法。另外还可以包含工程实现以及debug过程中的难点。
+- 对于没有经验的玩家和LLM模型处理经验的，摸索TensorRT-LLM并应用本身就有点难度。
+- 开发过程中出现精度误差时，需要逐层手动mark，进行比对定位，比较麻烦和耗时，大多时间消耗在这里。
+- 通过plugin支持解决fp16精度下groupnorm精度损失大的问题。
 
 ### 开发与优化过程
 
@@ -69,26 +94,7 @@
 
 ### Bug报告（可选）
 
-提交bug是对TensorRT/TensorRT-LLM的另一种贡献。发现的TensorRT/TensorRT-LLM或cookbook、或文档和教程相关bug，请提交到[github issues](https://github.com/NVIDIA/trt-samples-for-hackathon-cn/issues)，并请在这里给出链接。  
-
-对于每个bug，请标记上hackathon2023标签，并写好正文：
-
-- 对于cookbook或文档和教程相关bug，说清楚问题即可，不必很详细。
-- 对于TensorRT bug，首先确认在云主机上使用NGC docker + TensorRT 9.0.0.1可复现。
-- 然后填写如下模板，并请导师复核确认（前面“评分标准”已经提到，确认有效可得附加分）：
-  - Environment
-    - TensorRT 9.0.0.1
-    - Versions of CUDA, CUBLAS, CuDNN used
-    - Container used
-    - NVIDIA driver version
-  - Reproduction Steps
-    - Provide detailed reproduction steps for the issue here, including any commands run on the command line.
-  - Expected Behavior
-    - Provide a brief summary of the expected behavior of the software. Provide output files or examples if possible.
-  - Actual Behavior
-    - Describe the actual behavior of the software and how it deviates from the expected behavior. Provide output files or examples if possible.
-  - Additional Notes
-    - Provide any additional context here you think might be useful for the TensorRT team to help debug this issue (such as experiments done, potential things to investigate).
+暂无
 
 ### 送分题答案（可选）
 
