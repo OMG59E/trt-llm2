@@ -45,6 +45,8 @@ class UnidiffuserText2ImgTRT(object):
     def model_fn(self, x, t):
         text_N = torch.randn_like(self.clip.outputs[0]["tensor"]).type(torch.float32).contiguous().cuda()
         ts = t * self.N
+        alpha_t = self.noise_schedule.marginal_alpha(t).contiguous().cuda()
+        sigma_t = self.noise_schedule.marginal_std(t).contiguous().cuda()
         # t_start = time.time()
         x_data_ptr = self.uvit.inputs[0]["tensor"].data_ptr()
         x_data_size = self.uvit.inputs[0]["size"]
@@ -54,16 +56,19 @@ class UnidiffuserText2ImgTRT(object):
         contexts_data_size = self.uvit.inputs[2]["size"]
         text_N_data_ptr = self.uvit.inputs[3]["tensor"].data_ptr()
         text_N_data_size = self.uvit.inputs[3]["size"]
+        sigma_data_ptr = self.uvit.inputs[4]["tensor"].data_ptr()
+        sigma_data_size = self.uvit.inputs[4]["size"]
+        alpha_data_ptr = self.uvit.inputs[5]["tensor"].data_ptr()
+        alpha_data_size = self.uvit.inputs[5]["size"]
         cudart.cudaMemcpy(x_data_ptr, x.contiguous().data_ptr(), x_data_size, cudart.cudaMemcpyKind.cudaMemcpyDeviceToDevice)
         cudart.cudaMemcpy(ts_data_ptr, ts.contiguous().data_ptr(), ts_data_size, cudart.cudaMemcpyKind.cudaMemcpyDeviceToDevice)
         cudart.cudaMemcpy(contexts_data_ptr, self.clip.outputs[0]["tensor"].data_ptr(), contexts_data_size, cudart.cudaMemcpyKind.cudaMemcpyDeviceToDevice)
         cudart.cudaMemcpy(text_N_data_ptr, text_N.data_ptr(), text_N_data_size, cudart.cudaMemcpyKind.cudaMemcpyDeviceToDevice)
+        cudart.cudaMemcpy(sigma_data_ptr, sigma_t.data_ptr(), sigma_data_size, cudart.cudaMemcpyKind.cudaMemcpyDeviceToDevice)
+        cudart.cudaMemcpy(alpha_data_ptr, alpha_t.data_ptr(), alpha_data_size, cudart.cudaMemcpyKind.cudaMemcpyDeviceToDevice)
         self.uvit.infer()
         # print("uvit: {:.3f}ms".format((time.time() - t_start) * 1000))
-        noise = self.uvit.outputs[0]["tensor"]  # bs, 16896 (4*64*64 + 512)
-        alpha_t = self.noise_schedule.marginal_alpha(t)
-        sigma_t = self.noise_schedule.marginal_std(t)
-        x0 = (x - sigma_t * noise) / alpha_t
+        x0 = self.uvit.outputs[0]["tensor"]  # bs, 16896 (4*64*64 + 512)
         return x0
     
     def dpm_solver_first_update(self, x, s, t):
@@ -200,7 +205,7 @@ class UnidiffuserText2ImgTRT(object):
         
 if __name__ == "__main__":           
     m = UnidiffuserText2ImgTRT()
-    for idx in range(50):
+    for idx in range(1):
         t_start = time.time()
         samples = m.process(prompt="a dog under the sea", seed=29764)
         print(idx, "end2end {:.3f}ms".format((time.time() - t_start) * 1000))

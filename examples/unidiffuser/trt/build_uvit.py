@@ -15,7 +15,7 @@ torch.manual_seed(seed)
 torch.cuda.manual_seed_all(seed)
 
 engine_path = "outputs"
-precision = "float32"
+precision = "float16"
 engine_name = "uvit_{}.trt".format(precision)
 if not os.path.exists(engine_path):
     os.makedirs(engine_path)
@@ -97,8 +97,10 @@ with net_guard(network):
     ts = Tensor(name='ts', dtype=trt.float32, shape=[1,])
     text = Tensor(name='text', dtype=trt.float32, shape=[1, 77, 64])
     text_N = Tensor(name='text_N', dtype=trt.float32, shape=[1, 77, 64])
-    
-    x_out = tensorrt_llm_uvit(x, ts, text, text_N)
+    sigma = Tensor(name='sigma', dtype=trt.float32, shape=[1,])
+    alpha = Tensor(name='alpha', dtype=trt.float32, shape=[1,])
+    noise = tensorrt_llm_uvit(x, ts, text, text_N)
+    x_out = (x - sigma * noise) / alpha
     x_out.mark_output("x_out", trt.float32)
 
 engine = builder.build_engine(network, builder_config)
