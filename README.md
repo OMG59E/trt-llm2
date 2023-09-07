@@ -25,7 +25,7 @@
 |Model|PyTorch|FP32|FP16|
 |-|-|-|-|
 |clip + captution_encoder|6.891| |1.650|
-|uvit|88.519| |213.541|
+|uvit|213.541| |88.519|
 |decoder|334.181| |47.523|
 |pipeline|11018.846||4475.347|
 
