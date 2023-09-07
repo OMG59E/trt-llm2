@@ -20,6 +20,16 @@
 
 </div>
 
+<div align=center>
+
+|Model|PyTorch|FP32|FP16|
+|-|-|-|-|
+|clip + captution_encoder|6.891| |1.650|
+|uvit|88.519| |213.541|
+|decoder|334.181| |47.523|
+|pipeline|11018.846||4475.347|
+
+</div>
 
 请简练地概括项目的主要贡献，使读者可以快速理解并复现你的工作，包括：
 
