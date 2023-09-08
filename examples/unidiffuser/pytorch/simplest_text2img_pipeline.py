@@ -266,13 +266,14 @@ if __name__ == "__main__":
     total_ms = 0
     if not os.path.exists("images"):
         os.makedirs("images")
+        
     warmup = 5
+    for _ in range(warmup):
+        prompt, seed = prompts[0]
+        samples = m.process(prompt=prompt, seed=seed)
+        
     for idx, v in enumerate(tqdm.tqdm(prompts)):
         prompt, seed = v
-        # warmup
-        if idx < warmup:
-            samples = m.process(prompt=prompt, seed=seed)
-            continue
         t_start = time.time()
         samples = m.process(prompt=prompt, seed=seed, cumulative_time=True)
         total_ms += (time.time() - t_start) * 1000
