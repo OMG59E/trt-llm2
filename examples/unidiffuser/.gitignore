@@ -5,3 +5,5 @@ __pycache__
 *.trt
 *.jpg
 *.png
+*.nsys-rep
+*.onnx
