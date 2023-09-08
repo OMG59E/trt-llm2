@@ -18,7 +18,7 @@ def PD(base_img, new_img):
 torch_dir = "../pytorch/images"
 trt_dir = "images"
 
-for idx in range(35):
+for idx in range(40):
     base_path = os.path.join(torch_dir, "{}.jpg".format(str(idx).zfill(4)))
     new_path = os.path.join(trt_dir, "{}.jpg".format(str(idx).zfill(4)))
     score = PD(base_path, new_path)
