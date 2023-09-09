@@ -133,24 +133,27 @@ class UnidiffuserText2ImgTorch(object):
         clip_img = einops.rearrange(clip_img, 'B L D -> B (L D)')
         return torch.concat([z, clip_img], dim=-1)
 
-    def t2i_nnet(self, x, timesteps, text, text_N):  # text is the low dimension version of the text clip embedding
+    def t2i_nnet(self, x, timesteps, text):  # text is the low dimension version of the text clip embedding
+        text_N = torch.randn_like(text)  # 3 other possible choices
         z, clip_img = self.split(x)
         t_text = torch.zeros(timesteps.size(0), dtype=torch.int, device=self.device)
-        data_type = torch.zeros_like(t_text, device=self.device, dtype=torch.int) + 1
-        _z = torch.cat([z, z], dim=0)
-        _clip_img = torch.cat([clip_img, clip_img], dim=0)
-        _text = torch.cat([text, text_N], dim=0)
-        _t_img = torch.cat([timesteps, timesteps], dim=0)
-        _t_text = torch.cat([t_text, torch.ones_like(timesteps) * self.N], dim=0)
-        _data_type = torch.cat([data_type, data_type], dim=0)
-        z_out, clip_img_out, _ = self.nnet(_z, _clip_img, text=_text, t_img=_t_img, t_text=_t_text, data_type=_data_type)
+        z_out, clip_img_out, text_out = self.nnet(
+            z, clip_img, text=text, t_img=timesteps, t_text=t_text, 
+            data_type=torch.zeros_like(t_text, device=self.device, dtype=torch.int) + 1)
         x_out = self.combine(z_out, clip_img_out)
-        return x_out[0] + self.scale * (x_out[0] - x_out[1])
+
+        if self.scale == 0.:
+            return x_out
+
+        z_out_uncond, clip_img_out_uncond, text_out_uncond = self.nnet(
+            z, clip_img, text=text_N, t_img=timesteps, t_text=torch.ones_like(timesteps) * self.N, 
+            data_type=torch.zeros_like(t_text, device=self.device, dtype=torch.int) + 1)
+        x_out_uncond = self.combine(z_out_uncond, clip_img_out_uncond)
+        return x_out + self.scale * (x_out - x_out_uncond)
 
     def model_fn(self, x, t, contexts):
         alpha_t, sigma_t = self.noise_schedule.marginal_alpha(t), self.noise_schedule.marginal_std(t)
-        text_N = torch.randn_like(contexts)
-        noise = self.t2i_nnet(x, t * self.N, contexts, text_N)
+        noise = self.t2i_nnet(x, t * self.N, contexts)
         x0 = (x - sigma_t * noise) / alpha_t
         return x0
 
@@ -277,9 +280,9 @@ if __name__ == "__main__":
         t_start = time.time()
         samples = m.process(prompt=prompt, seed=seed, cumulative_time=True)
         total_ms += (time.time() - t_start) * 1000
-        cv2.imwrite("images/{}.jpg".format(str(idx - warmup).zfill(4)), samples[0])
-    print("clip: {:.3f}ms".format(m.total_clip_ms / (len(prompts) - warmup)))  
-    print("uvit: {:.3f}ms".format(m.total_uvit_x50_ms / (len(prompts) - warmup)))
-    print("decoder: {:.3f}ms".format(m.total_decoder_ms / (len(prompts) - warmup)))
-    print("end2end {:.3f}ms".format(total_ms / (len(prompts) - warmup)))
+        cv2.imwrite("images/{}.jpg".format(str(idx).zfill(4)), samples[0])
+    print("clip: {:.3f}ms".format(m.total_clip_ms / (len(prompts))))  
+    print("uvit: {:.3f}ms".format(m.total_uvit_x50_ms / (len(prompts))))
+    print("decoder: {:.3f}ms".format(m.total_decoder_ms / (len(prompts))))
+    print("end2end {:.3f}ms".format(total_ms / (len(prompts))))
 
