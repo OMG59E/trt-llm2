@@ -281,8 +281,8 @@ if __name__ == "__main__":
         samples = m.process(prompt=prompt, seed=seed, cumulative_time=True)
         total_ms += (time.time() - t_start) * 1000
         cv2.imwrite("images/{}.jpg".format(str(idx).zfill(4)), samples[0])
-    print("clip: {:.3f}ms".format(m.total_clip_ms / (len(prompts))))  
-    print("uvit: {:.3f}ms".format(m.total_uvit_x50_ms / (len(prompts))))
+    print("clip: {:.3f}ms".format(m.total_clip_ms / len(prompts)))  
+    print("uvit: {:.3f}ms, {:.3f}ms".format(m.total_uvit_x50_ms / len(prompts), m.total_uvit_x50_ms / len(prompts) / 50))
     print("decoder: {:.3f}ms".format(m.total_decoder_ms / (len(prompts))))
-    print("end2end {:.3f}ms".format(total_ms / (len(prompts))))
+    print("end2end {:.3f}ms".format(total_ms / len(prompts)))
 

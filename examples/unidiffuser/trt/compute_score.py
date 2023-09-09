@@ -18,9 +18,12 @@ def PD(base_img, new_img):
 torch_dir = "../pytorch/images"
 trt_dir = "images"
 
+scores = list()
 for idx in range(40):
     base_path = os.path.join(torch_dir, "{}.jpg".format(str(idx).zfill(4)))
     new_path = os.path.join(trt_dir, "{}.jpg".format(str(idx).zfill(4)))
     score = PD(base_path, new_path)
     print("{}.jpg".format(str(idx).zfill(4)), "PD score: {:.3f}".format(score)) 
+    scores.append(score)
+print("mean PD: {:.3f}".format(sum(scores) / len(scores)))
 
