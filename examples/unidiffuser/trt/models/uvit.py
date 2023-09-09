@@ -99,11 +99,13 @@ def timestep_embedding(timesteps: Tensor, dim, max_period=10000) -> Tensor :
     """
     half = dim // 2
     freqs = torch.exp(-math.log(max_period) * torch.arange(start=0, end=half, dtype=torch.float32) / half)[None]
-    freqs = constant(torch.cat([freqs, freqs], dim=0).detach().cpu().contiguous().numpy())
+    # freqs = constant(torch.cat([freqs, freqs], dim=0).detach().cpu().contiguous().numpy())
+    freqs = constant(freqs.detach().cpu().contiguous().numpy())  # 1,768
     timesteps_shape = list(timesteps.size())
-    timesteps_shape.append(1)
-    args = timesteps.view(shape=timesteps_shape).cast(trt.float32) * freqs
-    embedding = concat([cos(args), sin(args)], dim=1)
+    timesteps_shape.append(1)  # [bs,1]
+    # args = timesteps.view(shape=timesteps_shape).cast(trt.float32) * freqs  # [bs, 768]
+    args = matmul(timesteps.view(shape=timesteps_shape).cast(trt.float32), freqs)  # [bs, 768]
+    embedding = concat([cos(args), sin(args)], dim=1)  # [bs, 1536]
     if dim % 2:
         embedding = concat([embedding, constant(torch.zeros_like(embedding[:, :1]).detach().cpu().contiguous().numpy())], dim=1)
     return embedding
@@ -157,13 +159,13 @@ class UViT(Module):
         ]) if mlp_time_embed else identity   
              
         self.text_embed = Linear(text_dim, embed_dim, dtype=self.dtype)
-        self.text_out = Linear(embed_dim, text_dim, dtype=self.dtype)
+        # self.text_out = Linear(embed_dim, text_dim, dtype=self.dtype)
         
         self.clip_img_embed = Linear(clip_img_dim, embed_dim, dtype=self.dtype)
         self.clip_img_out = Linear(embed_dim, clip_img_dim, dtype=self.dtype)
         
-        self.num_text_tokens = num_text_tokens
-        self.num_tokens = 1 + 1 + num_text_tokens + 1 + self.num_patches
+        self.num_text_tokens = num_text_tokens   # 77
+        self.num_tokens = 1 + 1 + num_text_tokens + 1 + self.num_patches  # 1105
                 
         self.in_blocks = ModuleList([
             Block(dim=embed_dim, num_heads=num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, qk_scale=qk_scale, norm_layer=norm_layer, dtype=self.dtype) for _ in range(depth // 2)])
@@ -183,18 +185,33 @@ class UViT(Module):
         self.pos_embed_token = Parameter(shape=(1, 1, embed_dim), dtype=self.dtype)
         
     def forward(self, img, clip_img, text, t_img, t_text, data_type):
+        """
+        img shape:        bs, 4, 64, 64
+        clip_img shape:   bs, 1, 512
+        text shape:       2*bs, 77, 64
+        t_img shape:      bs,
+        t_text shape:     2*bs,
+        data_type shape:  bs,
+        """
         _, _, H, W = img.shape
 
         img = self.patch_embed(img)
         t_img_token = self.time_img_embed(timestep_embedding(t_img, self.embed_dim))
-        t_img_token = unsqueeze(t_img_token, axis=1)
         t_text_token = self.time_text_embed(timestep_embedding(t_text, self.embed_dim))
-        t_text_token = unsqueeze(t_text_token, axis=1) 
+        t_img_token = unsqueeze(t_img_token, axis=1)  # bs, 1, 1536
+        t_text_token = unsqueeze(t_text_token, axis=1)  # 2*bs, 1, 1536
 
-        text = self.text_embed(text)
-        clip_img = self.clip_img_embed(clip_img)
-        token_embed = unsqueeze(self.token_embedding(data_type), axis=1)
-        x = concat([t_img_token, t_text_token, token_embed, text, clip_img, img], dim=1)
+        text = self.text_embed(text)  # 2*bs, 77, 1536
+        clip_img = self.clip_img_embed(clip_img)  # bs, 1, 1536
+        token_embed = unsqueeze(self.token_embedding(data_type), axis=1)  # bs, 1, 1536
+
+        # x = concat([t_img_token, t_text_token, token_embed, text, clip_img, img], dim=1)  # bs, 1105, 1536
+        text0, text1 = text.split([1, 1], dim=0)
+        t_text_token0, t_text_token1 = t_text_token.split([1, 1], dim=0)
+        x0 = concat([t_img_token, t_text_token0, token_embed, text0, clip_img, img], dim=1)  # bs, 1105, 1536
+        x1 = concat([t_img_token, t_text_token1, token_embed, text1, clip_img, img], dim=1)  # bs, 1105, 1536
+        x = concat([x0, x1], dim=0)  # 2*bs, 1105, 1536
+
         num_text_tokens, num_img_tokens = text.size(1), img.size(1)
         pos_embed = concat([slice(self.pos_embed.value, starts=[0, 0, 0], sizes=[1, 2, self.embed_dim]), self.pos_embed_token.value,
                     slice(self.pos_embed.value, starts=[0, 2, 0], sizes=[1, self.num_tokens - 2, self.embed_dim])], dim=1)
@@ -219,13 +236,15 @@ class UViT(Module):
         for blk in self.out_blocks:
             x = blk(x, skips.pop())
         x = self.norm(x)
-        t_img_token_out, t_text_token_out, token_embed_out, text_out, clip_img_out, img_out = x.split([1, 1, 1, num_text_tokens, 1, num_img_tokens], dim=1)
         
+        bs = x.size(0)
+        img_out = slice(x, starts=[0, 1 + 1 + 1 + num_text_tokens + 1, 0], sizes=[bs, num_img_tokens, self.embed_dim])
+        clip_img_out = slice(x, starts=[0, 1 + 1 + 1 + num_text_tokens, 0], sizes=[bs, 1, self.embed_dim])
+
         img_out = self.decoder_pred(img_out)
         img_out = unpatchify(img_out, self.in_chans)
         clip_img_out = self.clip_img_out(clip_img_out)
-        text_out = self.text_out(text_out)
-        return img_out, clip_img_out, text_out
+        return img_out, clip_img_out
     
 
 def split(x: Tensor):
@@ -266,18 +285,17 @@ class UViTNet(Module):
                          clip_img_dim=512, 
                          np_dtype=np.float32)
     
-    def forward(self, x, timesteps, text, text_N):
+    def forward(self, x, timesteps, text, text_N, sigma, alpha):
         bs = timesteps.shape[0]
         z, clip_img = split(x)
-        t_text = constant(np.zeros(shape=(bs,), dtype=np.int32))
+        t_text0 = constant(np.zeros(shape=(bs,), dtype=np.int32))
+        t_text1 = constant(np.ones(shape=(bs,), dtype=np.int32) * 1000)
         data_type = constant(np.zeros(shape=(bs,), dtype=np.int32) + 1)
-        _z = concat([z, z], dim=0)
-        _clip_img = concat([clip_img, clip_img], dim=0)
-        _text = concat([text, text_N], dim=0)
-        _t_img = concat([timesteps, timesteps], dim=0)
-        _t_text = concat([t_text, constant(np.ones(shape=(bs,), dtype=np.int32) * 1000)], dim=0)
-        _data_type = concat([data_type, data_type], dim=0)
-        z_out, clip_img_out, _ = self.nnet(_z, _clip_img, text=_text, t_img=_t_img, t_text=_t_text, data_type=_data_type)
+        text = concat([text, text_N], dim=0)  # 2*bs, 77, 64
+        t_text = concat([t_text0, t_text1], dim=0)  # 2*bs,
+        z_out, clip_img_out = self.nnet(z, clip_img, text=text, t_img=timesteps, t_text=t_text, data_type=data_type)
         x_out = combine(z_out, clip_img_out)
-        x_out0, x_out1 = x_out.split(1, dim=0)
-        return x_out0 + 7. * (x_out0 - x_out1)
+        x_out0, x_out1 = x_out.split([1, 1], dim=0)
+        noise = x_out0 + 7. * (x_out0 - x_out1)
+        x_out = (x - sigma * noise) / alpha
+        return x_out
