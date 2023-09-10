@@ -20,11 +20,13 @@
 
 </div>
 
-经过**fp16 + batch + cudaGraph**优化后，最终获得各模型加速比分别为**CLIP**部分约**4.2**倍、**UViT**部分**2.4**倍、**Decoder**部分**4.7**倍，整个**pipeline**加速比约为**2.4**倍；同时使用初赛的**PD**评估方法，测试40个prompt + seed得到平均PD得分**6.883**。
+经过**fp16 + batch + cudaGraph**优化后，最终获得各模型加速比分别为**CLIP**部分约**4.2**倍、**UViT**部分约**2.4**倍、**Decoder**部分约**4.7**倍，整个**pipeline**加速比约**2.4**倍；同时使用初赛的**PD**评估方法，测试40个prompt + seed得到平均PD得分**6.883**。
 
 **编译、运行、测试步骤如下**：
 
 ```shell
+docker pull registry.cn-hangzhou.aliyuncs.com/trt-hackathon/trt-hackathon:final_v1  # 拉取镜像
+docker run --name=trt2023 -it registry.cn-hangzhou.aliyuncs.com/trt-hackathon/trt-hackathon:final_v1 bash  # 实例化容器
 git clone https://gitee.com/xingwg/trt-llm2.git
 cd trt-llm2/examples/unidiffuser/pytorch
 # 预先将模型下载到trt-llm2/examples/unidiffuser/pytorch/models，下载地址见“主要开发工作部分”
@@ -33,7 +35,7 @@ cd ../trt
 python hf_unidiffuser_convert.py   
 python build_clip.py   # 编译CLIP fp16
 python build_uvit.py  # 编译UViT fp16
-cd plugin && mkdir -p build && cd build && cmake -DCMAKE_BUILD_TYPE=Release ..  # 编译groupnorm插件
+cd plugin && mkdir -p build && cd build && cmake -DCMAKE_BUILD_TYPE=Release .. && make  # 编译groupnorm插件
 cd ../../ && python build_decoder.py  # 编译 decoder fp16
 python run.py   # 执行trt pipeline, 同时生成40张测试图片
 python compute_score.py  # 进行PD评估
@@ -64,7 +66,7 @@ Unidiffuser模型的"文生图"任务共包含4个模型，分别是:
 
 ### 开发与优化过程
 
-- 首先需要了解原模型整个“文生图”任务的pipeline，本次比赛通过简化原代码最终获得了最简化的pipeline，见代码**unidiffuser/pytorch/simplest_text2img_pipeline.py**，同时实现onnx模型导出的代码，方便查看模型graph，见代码**unidiffuser/pytorch/export_onnx.py**
+- 首先需要了解原模型整个“文生图”任务的pipeline，本次比赛通过简化原代码最终获得了最简化的pipeline，见代码**unidiffuser/pytorch/simplest_text2img_pipeline.py**，同时实现onnx模型导出的代码，方便查看模型graph，见代码**unidiffuser/pytorch/export_onnx.py**，本次比赛原模型的参数除了prompt和seed，其余参数均被固定batch_size=1、生成图片大小固定为512x512
 
 - 通过对简化原模型的pipeline，对模型有了初步了解，接下来通过TensorRT-LLM的API手动搭建模型，在搭建模型之前可以通过TensorRT-LLM自带的示例对其进行初步的摸索。TensorRT-LLM实现一个模型需要三步，**第一步手动搭建模型**，**第二步转换保存原模型权重**，**第三步构建模型**。
 
@@ -81,21 +83,55 @@ TensorRT-LLM的主要主要算子实现在**tensorrt_llm.layers**、以及**tens
 
 </div>
 
+- 通过trtexec观察逐层CLIP模型，发现整个模型被myelin融合成为一个巨大node，trt已经做了极致优化，无优化空间：
 
+```shell
+[09/10/2023-06:59:18] [I] === Profile (3449 iterations ) ===
+[09/10/2023-06:59:18] [I]    Time(ms)     Avg.(ms)   Median(ms)   Time(%)   Layer
+[09/10/2023-06:59:18] [I]     3078.36       0.8925       0.8929      99.5   {ForeignNode[CLIPTextTransformer/embeddings/position_embedding/CONSTANT_0...ELEMENTWISE_SUM_0]}
+[09/10/2023-06:59:18] [I]       14.82       0.0043       0.0033       0.5   Reformatting CopyNode for Output Tensor 0 to {ForeignNode[CLIPTextTransformer/embeddings/position_embedding/CONSTANT_0...ELEMENTWISE_SUM_0]}
+[09/10/2023-06:59:18] [I]     3093.17       0.8968       0.8960     100.0   Total
+```
 
-这一部分是报告的主体。请把自己假定为老师，为 TensorRT 或 TensorRT-LLM 的初学者讲述如何从原始模型出发，经过一系列开发步骤，得到优化后的 TensorRT 或 TensorRT-LLM 模型。或者你是如何一步步通过修改哪些模块添加了新feature的。
+- 通过trtexec观察逐层UViT模型，同样发现整个模型被myelin融合成为一个巨大node，trt已经做了极致优化，无优化空间：
 
-建议：
+```shell
+[09/10/2023-07:02:34] [I] === Profile (41 iterations ) ===
+[09/10/2023-07:02:34] [I]    Time(ms)     Avg.(ms)   Median(ms)   Time(%)   Layer
+[09/10/2023-07:02:34] [I]        3.60       0.0878       0.0051       0.1   UViTNet/SHUFFLE_4_copy_input
+[09/10/2023-07:02:34] [I]        3.63       0.0885       0.0061       0.1   Reformatting CopyNode for Input Tensor 0 to UViTNet/nnet/patch_embed/proj/CONVOLUTION_0
+[09/10/2023-07:02:34] [I]        0.54       0.0131       0.0123       0.0   UViTNet/nnet/patch_embed/proj/CONVOLUTION_0
+[09/10/2023-07:02:34] [I]        1.68       0.0409       0.0143       0.0   Reformatting CopyNode for Input Tensor 0 to {ForeignNode[UViTNet/CONSTANT_8...UViTNet/ELEMENTWISE_DIV_0]}
+[09/10/2023-07:02:34] [I]        3.26       0.0795       0.0051       0.1   Reformatting CopyNode for Input Tensor 1 to {ForeignNode[UViTNet/CONSTANT_8...UViTNet/ELEMENTWISE_DIV_0]}
+[09/10/2023-07:02:34] [I]        0.21       0.0052       0.0051       0.0   Reformatting CopyNode for Input Tensor 2 to {ForeignNode[UViTNet/CONSTANT_8...UViTNet/ELEMENTWISE_DIV_0]}
+[09/10/2023-07:02:34] [I]        0.20       0.0049       0.0051       0.0   Reformatting CopyNode for Input Tensor 3 to {ForeignNode[UViTNet/CONSTANT_8...UViTNet/ELEMENTWISE_DIV_0]}
+[09/10/2023-07:02:34] [I]        0.20       0.0048       0.0051       0.0   Reformatting CopyNode for Input Tensor 4 to {ForeignNode[UViTNet/CONSTANT_8...UViTNet/ELEMENTWISE_DIV_0]}
+[09/10/2023-07:02:34] [I]        0.19       0.0046       0.0051       0.0   Reformatting CopyNode for Input Tensor 5 to {ForeignNode[UViTNet/CONSTANT_8...UViTNet/ELEMENTWISE_DIV_0]}
+[09/10/2023-07:02:34] [I]        0.19       0.0047       0.0051       0.0   Reformatting CopyNode for Input Tensor 6 to {ForeignNode[UViTNet/CONSTANT_8...UViTNet/ELEMENTWISE_DIV_0]}
+[09/10/2023-07:02:34] [I]     3345.99      81.6096      79.3160      99.6   {ForeignNode[UViTNet/CONSTANT_8...UViTNet/ELEMENTWISE_DIV_0]}
+[09/10/2023-07:02:34] [I]        0.20       0.0049       0.0051       0.0   Reformatting CopyNode for Output Tensor 0 to {ForeignNode[UViTNet/CONSTANT_8...UViTNet/ELEMENTWISE_DIV_0]}
+[09/10/2023-07:02:34] [I]     3359.89      81.9486      79.3866     100.0   Total
+```
 
-- 分步骤讲清楚开发过程
-- 最好能介绍为什么需要某个特别步骤，通过这个特别步骤解决了什么问题
-  - 比如，通过Nsight Systems绘制timeline做了性能分析，发现attention时间占比高且有优化空间（贴图展示分析过程），所以决定要写plugin。然后介绍plugin的设计与实现，并在timeline上显示attention这一部分的性能改进。
+- 通过trtexec观察逐层Decoder模型，发现时间主要好在Conv、GroupNorm、Upsample，相对也无优化空间：
 
-### 优化效果
+- 分析整体pipeline发现uvit推理的前处理和后处理调用noise_schedule部分GPU利用率很低，增减整体时延，**待优化**：
 
 <div align=center>
 
-|Model|PyTorch-FP32|PyTorch-FP16(baseline, uvit-fp16)|TRT-FP32 + CudaGraph|TRT-FP16|TRT-FP16 + CudaGraph|
+<img src=docs/timeline.png width=70% />
+
+</div>
+
+- 使用cudaGraph减少kernel登录时间，这里有坑用cudaGraph的情况下，**nsys profile**会有问题。
+
+### 优化效果
+
+- 性能，性能测试是warmup5张图，后生成40张图，得到的平均时间
+
+<div align=center>
+
+|Model(bs=1)|PyTorch-FP32|PyTorch-FP16(baseline, uvit-fp16)|TRT-FP32 + CudaGraph|TRT-FP16|TRT-FP16 + CudaGraph|
 |-|-|-|-|-|-|
 |clip + captution_encoder|6.996|6.936|2.468|2.135|1.631|
 |uvit|270.409|211.132|254.555|103.029|88.406|
@@ -104,21 +140,7 @@ TensorRT-LLM的主要主要算子实现在**tensorrt_llm.layers**、以及**tens
 
 </div>
 
-这一部分介绍你的工作在云主机上的运行效果。如果是优化模型，需要分两部分说明：
-
-- 精度：报告与原始模型进行精度对比测试的结果，验证精度达标。
-  - 如果选用TensorRT-LLM，请跑summarize任务并使用 [Rouge](https://huggingface.co/spaces/evaluate-metric/rouge) 来对比模型优化前后的精度差距。如果精度良好，原始模型与优化模型的Rouge score的差异一般在1以内。例子见 TensorRT-LLM docker 中 /root/workspace/tensorrt_llm_july-release-v1/examples/gpt/summarize.py
-  - 如果选用TensorRT，这里的精度测试指的是针对“原始模型”和“TensorRT优化模型”分别输出的数据（tensor）进行数值比较。请给出绝对误差和相对误差的统计结果（至少包括最大值、平均值与中位数）。
-    - 使用训练好的权重和有意义的输入数据更有说服力。如果选手使用了随机权重和输入数据，请在这里注明。
-    - 在精度损失较大的情况下，鼓励选手用训练好的权重和测试数据集对模型优化前与优化后的准确度指标做全面比较，以增强说服力。
-- 性能：例如可以用图表展示不同batch size或sequence length下性能加速效果（考虑到可能模型可能比较大，可以只给batch size为1的数据）
-  - 一般用原始模型作为baseline
-  - 一般提供模型推理时间的加速比即可；若能提供压力测试下的吞吐提升则更好。
-
-请注意：
-
-- 相关测试代码也需要包含在代码仓库中，可被复现。
-- 请写明云主机的软件硬件环境，方便他人参考。
+- 精度，使用初赛的PD评估方法，评估40张图的平均PD score：6.883
 
 ### Bug报告（可选）
 
