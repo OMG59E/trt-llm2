@@ -3,7 +3,7 @@ import os
 import sys
 import numpy as np
 import torch
-from transformers import CLIPTokenizer, CLIPTextModel
+from transformers import CLIPTextModel
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 from pytorch.libs.caption_decoder import CaptionDecoder
 from pytorch.libs.uvit_multi_post_ln_v1 import UViT
@@ -15,7 +15,6 @@ if not os.path.exists(weight_dir):
     os.makedirs(weight_dir)
     
 # clip
-tokenizer = CLIPTokenizer.from_pretrained("openai/clip-vit-large-patch14")
 transformer = CLIPTextModel.from_pretrained("openai/clip-vit-large-patch14")
 for name, param in transformer.named_parameters():
     if "weight" not in name and "bias" not in name:
