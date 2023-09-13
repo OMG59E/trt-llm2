@@ -359,13 +359,13 @@ class UViTNet1(Module):
         x_out = (x - sigma * noise) / alpha
         return x_out
     
-    def forward(self, x: Tensor, idx: Tensor, text: Tensor, text_N: Tensor) -> Tensor:
+    def forward(self, z: Tensor, clip_img: Tensor, idx: Tensor, text: Tensor, text_N: Tensor) -> Tensor:
         timesteps = unsqueeze(constant(self.timesteps.detach().cpu().numpy()), axis=0)  # [1, 51]
         marginal_alpha = unsqueeze(constant(self.marginal_alpha.detach().cpu().numpy()), axis=0)  # [1, 51]
         marginal_std = unsqueeze(constant(self.marginal_std.detach().cpu().numpy()), axis=0)  # [1, 51]        
         marginal_lambda_exp = unsqueeze(constant(self.marginal_lambda_exp.detach().cpu().numpy()), axis=0)  # [1, 51]
         _alpha_t = unsqueeze(constant(self.alpha_t.detach().cpu().numpy()), axis=0)  # [1, 51]
-        
+        x = combine(z, clip_img)
         alpha_t = select(_alpha_t, dim=1, index=idx + 1)
         phi_1 = 1. - select(marginal_lambda_exp, dim=1, index=idx) / select(marginal_lambda_exp, dim=1, index=idx + 1)
         
@@ -377,7 +377,8 @@ class UViTNet1(Module):
         sigma = select(marginal_std, dim=1, index=idx)
         noise_s = self.model_fn(x, ts, text, text_N, sigma, alpha)
         x_t = (sigma_t / sigma_s) * x + (alpha_t * phi_1) * noise_s
-        return x_t
+        z_out, clip_img_out = split(x_t)
+        return z_out, clip_img_out
     
 
 class UViTNet2(Module):
@@ -434,7 +435,7 @@ class UViTNet2(Module):
         x_out = (x - sigma * noise) / alpha
         return x_out
     
-    def forward(self, x: Tensor, idx: Tensor, text: Tensor, text_N0: Tensor, text_N1: Tensor) -> Tensor:
+    def forward(self, z: Tensor, clip_img: Tensor, idx: Tensor, text: Tensor, text_N0: Tensor, text_N1: Tensor) -> Tensor:
         timesteps = unsqueeze(constant(self.timesteps.detach().cpu().numpy()), axis=0)  # [1, 51]
         marginal_alpha = unsqueeze(constant(self.marginal_alpha.detach().cpu().numpy()), axis=0)  # [1, 51]
         marginal_std = unsqueeze(constant(self.marginal_std.detach().cpu().numpy()), axis=0)  # [1, 51]
@@ -445,7 +446,7 @@ class UViTNet2(Module):
         marginal_std_inverse = unsqueeze(constant(self.marginal_std_inverse.detach().cpu().numpy()), axis=0)
         _alpha_s1 = unsqueeze(constant(self.alpha_s1.detach().cpu().numpy()), axis=0)
         _alpha_t = unsqueeze(constant(self.alpha_t.detach().cpu().numpy()), axis=0)
-    
+        x = combine(z, clip_img)
         r1 = (select(marginal_lambda, dim=1, index=idx + 1) - select(marginal_lambda, dim=1, index=idx)) / (select(marginal_lambda, dim=1, index=idx + 2) - select(marginal_lambda, dim=1, index=idx))
              
         sigma_s = select(marginal_std, dim=1, index=idx)
@@ -471,7 +472,8 @@ class UViTNet2(Module):
         sigma = select(marginal_std_inverse, dim=1, index=idx + 1)
         noise_s1 = self.model_fn(x_s1, ts, text, text_N1, sigma, alpha)
         x_t = (sigma_t / sigma_s) * x - (alpha_t * phi_1) * noise_s - (alpha_t * phi_1 * 0.5 / r1) * (noise_s1 - noise_s)
-        return x_t
+        z_out, clip_img_out = split(x_t)
+        return z_out, clip_img_out
     
 
 class UViTNet3(Module):
@@ -528,7 +530,7 @@ class UViTNet3(Module):
         x_out = (x - sigma * noise) / alpha
         return x_out
     
-    def forward(self, x: Tensor, idx: Tensor, text: Tensor, text_N0: Tensor, text_N1: Tensor, text_N2: Tensor) -> Tensor:
+    def forward(self, z: Tensor, clip_img: Tensor, idx: Tensor, text: Tensor, text_N0: Tensor, text_N1: Tensor, text_N2: Tensor) -> Tensor:
         timesteps = unsqueeze(constant(self.timesteps.detach().cpu().numpy()), axis=0)  # [1, 51]
         marginal_alpha = unsqueeze(constant(self.marginal_alpha.detach().cpu().numpy()), axis=0)  # [1, 51]
         marginal_std = unsqueeze(constant(self.marginal_std.detach().cpu().numpy()), axis=0)  # [1, 51]
@@ -539,7 +541,7 @@ class UViTNet3(Module):
         _alpha_s1 = unsqueeze(constant(self.alpha_s1.detach().cpu().numpy()), axis=0)
         _alpha_s2 = unsqueeze(constant(self.alpha_s2.detach().cpu().numpy()), axis=0)
         _alpha_t = unsqueeze(constant(self.alpha_t.detach().cpu().numpy()), axis=0)
-
+        x = combine(z, clip_img)
         r1 = (select(marginal_lambda, dim=1, index=idx + 1) - select(marginal_lambda, dim=1, index=idx)) / (select(marginal_lambda, dim=1, index=idx + 3) - select(marginal_lambda, dim=1, index=idx))
         r2 = (select(marginal_lambda, dim=1, index=idx + 2) - select(marginal_lambda, dim=1, index=idx)) / (select(marginal_lambda, dim=1, index=idx + 3) - select(marginal_lambda, dim=1, index=idx))
         
@@ -579,4 +581,5 @@ class UViTNet3(Module):
         sigma = select(marginal_std_inverse, dim=1, index=idx + 2)
         noise_s2 = self.model_fn(x_s2, ts, text, text_N2, sigma, alpha)
         x_t = (sigma_t / sigma_s) * x - (alpha_t * phi_1) * noise_s + (alpha_t * phi_2 / r2) * (noise_s2 - noise_s)
-        return x_t
+        z_out, clip_img_out = split(x_t)
+        return z_out, clip_img_out

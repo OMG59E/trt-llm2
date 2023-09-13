@@ -99,12 +99,14 @@ def build_engine1(tensorrt_llm_uvit):
 
     with net_guard(network):
         network.set_named_parameters(tensorrt_llm_uvit.named_parameters())
-        x = Tensor(name='x', dtype=trt.float32, shape=[1, 16896])
+        z = Tensor(name='z', dtype=trt.float32, shape=[1, 4, 64, 64])
+        clip_img = Tensor(name='clip_img', dtype=trt.float32, shape=[1, 1, 512])
         idx = Tensor(name='idx', dtype=trt.int32, shape=[1,])
         text = Tensor(name='text', dtype=trt.float32, shape=[1, 77, 64])
         text_N = Tensor(name='text_N', dtype=trt.float32, shape=[1, 77, 64])
-        x_out = tensorrt_llm_uvit(x, idx, text, text_N)
+        x_out, clip_img_out = tensorrt_llm_uvit(z, clip_img, idx, text, text_N)
         x_out.mark_output("x_out", trt.float32)
+        clip_img_out.mark_output("clip_img_out", trt.float32)
 
     engine = builder.build_engine(network, builder_config)
     return engine
@@ -118,13 +120,15 @@ def build_engine2(tensorrt_llm_uvit):
 
     with net_guard(network):
         network.set_named_parameters(tensorrt_llm_uvit.named_parameters())
-        x = Tensor(name='x', dtype=trt.float32, shape=[1, 16896])
+        z = Tensor(name='z', dtype=trt.float32, shape=[1, 4, 64, 64])
+        clip_img = Tensor(name='clip_img', dtype=trt.float32, shape=[1, 1, 512])
         idx = Tensor(name='idx', dtype=trt.int32, shape=[1,])
         text = Tensor(name='text', dtype=trt.float32, shape=[1, 77, 64])
         text_N0 = Tensor(name='text_N0', dtype=trt.float32, shape=[1, 77, 64])
         text_N1 = Tensor(name='text_N1', dtype=trt.float32, shape=[1, 77, 64])
-        x_out = tensorrt_llm_uvit(x, idx, text, text_N0, text_N1)
+        x_out, clip_img_out = tensorrt_llm_uvit(z, clip_img, idx, text, text_N0, text_N1)
         x_out.mark_output("x_out", trt.float32)
+        clip_img_out.mark_output("clip_img_out", trt.float32)
 
     engine = builder.build_engine(network, builder_config)
     return engine
@@ -138,14 +142,16 @@ def build_engine3(tensorrt_llm_uvit):
 
     with net_guard(network):
         network.set_named_parameters(tensorrt_llm_uvit.named_parameters())
-        x = Tensor(name='x', dtype=trt.float32, shape=[1, 16896])
+        z = Tensor(name='z', dtype=trt.float32, shape=[1, 4, 64, 64])
+        clip_img = Tensor(name='clip_img', dtype=trt.float32, shape=[1, 1, 512])
         idx = Tensor(name='idx', dtype=trt.int32, shape=[1,])
         text = Tensor(name='text', dtype=trt.float32, shape=[1, 77, 64])
         text_N0 = Tensor(name='text_N0', dtype=trt.float32, shape=[1, 77, 64])
         text_N1 = Tensor(name='text_N1', dtype=trt.float32, shape=[1, 77, 64])
         text_N2 = Tensor(name='text_N2', dtype=trt.float32, shape=[1, 77, 64])
-        x_out = tensorrt_llm_uvit(x, idx, text, text_N0, text_N1, text_N2)
+        x_out, clip_img_out = tensorrt_llm_uvit(z, clip_img, idx, text, text_N0, text_N1, text_N2)
         x_out.mark_output("x_out", trt.float32)
+        clip_img_out.mark_output("clip_img_out", trt.float32)
 
     engine = builder.build_engine(network, builder_config)
     return engine

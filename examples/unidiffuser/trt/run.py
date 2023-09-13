@@ -5,13 +5,10 @@ import time
 import tqdm
 import numpy as np
 import torch
-import einops
 from cuda import cudart
 from trt_infer import TRTInfer
 from transformers import CLIPTokenizer
 from plugin import GroupNormLayer
-sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
-from pytorch.dpm_solver_pp import NoiseScheduleVP
 
 
 prompts = [
@@ -61,11 +58,11 @@ prompts = [
 class UnidiffuserText2ImgTRT(object):
     def __init__(self) -> None:
         self.tokenizer = CLIPTokenizer.from_pretrained("openai/clip-vit-large-patch14")
-        self.clip = TRTInfer("outputs/clip_float16.trt", use_cuda_graph=False)
+        self.clip = TRTInfer("outputs/clip_float16.trt", use_cuda_graph=True)
         self.uvit1 = TRTInfer("outputs/uvit1_float16.trt", use_cuda_graph=False)
         self.uvit2 = TRTInfer("outputs/uvit2_float16.trt", use_cuda_graph=False)
         self.uvit3 = TRTInfer("outputs/uvit3_float16.trt", use_cuda_graph=False)
-        self.decoder = TRTInfer("outputs/decoder_float16.trt", use_cuda_graph=False)
+        self.decoder = TRTInfer("outputs/decoder_float16.trt", use_cuda_graph=True)
         
         self.device = 'cuda'
         self.n_samples = 1
@@ -73,12 +70,6 @@ class UnidiffuserText2ImgTRT(object):
         self.clip_img_dim = 512
         self.sample_steps = 50
         
-        self._betas = torch.linspace(0.00085 ** 0.5, 0.0120 ** 0.5, 1000, dtype=torch.float32) ** 2
-        self.N = len(self._betas)
-        self.noise_schedule = NoiseScheduleVP(schedule='discrete', betas=torch.tensor(self._betas.numpy(), device=self.device).float())
-
-        t_0 = 1. / self.N
-        t_T = 1.
         K = self.sample_steps // 3 + 1
         if self.sample_steps % 3 == 0:
             self.orders = [3,] * (K - 2) + [2, 1]
@@ -87,86 +78,78 @@ class UnidiffuserText2ImgTRT(object):
         else:
             self.orders = [3,] * (K - 1) + [2]
             
-        self.timesteps = torch.linspace(t_T, t_0, self.sample_steps + 1).type(torch.float32).cuda()   # time_uniform
-        self.marginal_lambda = self.noise_schedule.marginal_lambda(self.timesteps).type(torch.float32)
-        self.marginal_alpha = self.noise_schedule.marginal_alpha(self.timesteps).type(torch.float32)
-        self.marginal_std = self.noise_schedule.marginal_std(self.timesteps).type(torch.float32)
-        self.marginal_log_mean_coeff = self.noise_schedule.marginal_log_mean_coeff(self.timesteps).type(torch.float32)
-
-        self.inverse_lambda = self.noise_schedule.inverse_lambda(self.marginal_lambda).type(torch.float32)
-        self.marginal_log_mean_coeff_inverse = self.noise_schedule.marginal_log_mean_coeff(self.inverse_lambda).type(torch.float32)
-        self.marginal_alpha_inverse = self.noise_schedule.marginal_alpha(self.inverse_lambda).type(torch.float32)
-        self.marginal_std_inverse = self.noise_schedule.marginal_std(self.inverse_lambda).type(torch.float32)
-        
-        self.alpha_s1 = torch.exp(self.marginal_log_mean_coeff_inverse).type(torch.float32)
-        self.alpha_s2 = torch.exp(self.marginal_log_mean_coeff_inverse).type(torch.float32)
-        self.alpha_t = torch.exp(self.marginal_log_mean_coeff).type(torch.float32)
-        self.marginal_lambda_exp = torch.exp(self.marginal_lambda).type(torch.float32)
-
         self.text_N = None
         
         self.total_clip_ms = 0
         self.total_uvit_x50_ms = 0
         self.total_decoder_ms = 0
 
-    def dpm_solver_first_update(self, x: torch.Tensor, idx: int):
-        x_data_ptr = self.uvit1.inputs[0]["tensor"].data_ptr()
-        x_data_size = self.uvit1.inputs[0]["size"]
-        text_data_ptr = self.uvit1.inputs[2]["tensor"].data_ptr()
-        text_data_size = self.uvit1.inputs[2]["size"]
-        text_N_data_ptr = self.uvit1.inputs[3]["tensor"].data_ptr()
-        text_N_data_size = self.uvit1.inputs[3]["size"]
+    def dpm_solver_first_update(self, z: torch.Tensor, clip_img: torch.Tensor, idx: int):
+        z_data_ptr = self.uvit1.inputs[0]["tensor"].data_ptr()
+        z_data_size = self.uvit1.inputs[0]["size"]
+        clip_img_data_ptr = self.uvit1.inputs[1]["tensor"].data_ptr()
+        clip_img_data_size = self.uvit1.inputs[1]["size"]
+        text_data_ptr = self.uvit1.inputs[3]["tensor"].data_ptr()
+        text_data_size = self.uvit1.inputs[3]["size"]
+        text_N_data_ptr = self.uvit1.inputs[4]["tensor"].data_ptr()
+        text_N_data_size = self.uvit1.inputs[4]["size"]
 
-        self.uvit1.inputs[1]["tensor"][0] = idx
-        cudart.cudaMemcpy(x_data_ptr, x.contiguous().data_ptr(), x_data_size, cudart.cudaMemcpyKind.cudaMemcpyDeviceToDevice)
+        self.uvit1.inputs[2]["tensor"][0] = idx
+        cudart.cudaMemcpy(z_data_ptr, z.data_ptr(), z_data_size, cudart.cudaMemcpyKind.cudaMemcpyDeviceToDevice)
+        cudart.cudaMemcpy(clip_img_data_ptr, clip_img.data_ptr(), clip_img_data_size, cudart.cudaMemcpyKind.cudaMemcpyDeviceToDevice)
         cudart.cudaMemcpy(text_data_ptr, self.clip.outputs[0]["tensor"].data_ptr(), text_data_size, cudart.cudaMemcpyKind.cudaMemcpyDeviceToDevice)
-        cudart.cudaMemcpy(text_N_data_ptr, self.text_N[idx].contiguous().data_ptr(), text_N_data_size, cudart.cudaMemcpyKind.cudaMemcpyDeviceToDevice)        
+        cudart.cudaMemcpy(text_N_data_ptr, self.text_N[idx].data_ptr(), text_N_data_size, cudart.cudaMemcpyKind.cudaMemcpyDeviceToDevice)        
         self.uvit1.infer()
-        return self.uvit1.outputs[0]["tensor"]
+        return self.uvit1.outputs[0]["tensor"], self.uvit1.outputs[1]["tensor"]
 
-    def dpm_solver_second_update(self, x: torch.Tensor, idx: int):
-        x_data_ptr = self.uvit2.inputs[0]["tensor"].data_ptr()
-        x_data_size = self.uvit2.inputs[0]["size"]
-        text_data_ptr = self.uvit2.inputs[2]["tensor"].data_ptr()
-        text_data_size = self.uvit2.inputs[2]["size"]
-        text_N0_data_ptr = self.uvit2.inputs[3]["tensor"].data_ptr()
-        text_N0_data_size = self.uvit2.inputs[3]["size"]
-        text_N1_data_ptr = self.uvit2.inputs[4]["tensor"].data_ptr()
-        text_N1_data_size = self.uvit2.inputs[4]["size"]
+    def dpm_solver_second_update(self, z: torch.Tensor, clip_img: torch.Tensor, idx: int):
+        z_data_ptr = self.uvit2.inputs[0]["tensor"].data_ptr()
+        z_data_size = self.uvit2.inputs[0]["size"]
+        clip_img_data_ptr = self.uvit2.inputs[1]["tensor"].data_ptr()
+        clip_img_data_size = self.uvit2.inputs[1]["size"]
+        text_data_ptr = self.uvit2.inputs[3]["tensor"].data_ptr()
+        text_data_size = self.uvit2.inputs[3]["size"]
+        text_N0_data_ptr = self.uvit2.inputs[4]["tensor"].data_ptr()
+        text_N0_data_size = self.uvit2.inputs[4]["size"]
+        text_N1_data_ptr = self.uvit2.inputs[5]["tensor"].data_ptr()
+        text_N1_data_size = self.uvit2.inputs[5]["size"]
 
-        self.uvit2.inputs[1]["tensor"][0] = idx
-        cudart.cudaMemcpy(x_data_ptr, x.data_ptr(), x_data_size, cudart.cudaMemcpyKind.cudaMemcpyDeviceToDevice)
+        self.uvit2.inputs[2]["tensor"][0] = idx
+        cudart.cudaMemcpy(z_data_ptr, z.data_ptr(), z_data_size, cudart.cudaMemcpyKind.cudaMemcpyDeviceToDevice)
+        cudart.cudaMemcpy(clip_img_data_ptr, clip_img.data_ptr(), clip_img_data_size, cudart.cudaMemcpyKind.cudaMemcpyDeviceToDevice)
         cudart.cudaMemcpy(text_data_ptr, self.clip.outputs[0]["tensor"].data_ptr(), text_data_size, cudart.cudaMemcpyKind.cudaMemcpyDeviceToDevice)
-        cudart.cudaMemcpy(text_N0_data_ptr, self.text_N[idx].contiguous().data_ptr(), text_N0_data_size, cudart.cudaMemcpyKind.cudaMemcpyDeviceToDevice)     
-        cudart.cudaMemcpy(text_N1_data_ptr, self.text_N[idx + 1].contiguous().data_ptr(), text_N1_data_size, cudart.cudaMemcpyKind.cudaMemcpyDeviceToDevice)    
+        cudart.cudaMemcpy(text_N0_data_ptr, self.text_N[idx].data_ptr(), text_N0_data_size, cudart.cudaMemcpyKind.cudaMemcpyDeviceToDevice)     
+        cudart.cudaMemcpy(text_N1_data_ptr, self.text_N[idx + 1].data_ptr(), text_N1_data_size, cudart.cudaMemcpyKind.cudaMemcpyDeviceToDevice)    
         self.uvit2.infer()
-        return self.uvit2.outputs[0]["tensor"]
+        return self.uvit2.outputs[0]["tensor"], self.uvit2.outputs[1]["tensor"]
 
-    def dpm_solver_third_update(self, x: torch.Tensor, idx: int):
-        x_data_ptr = self.uvit3.inputs[0]["tensor"].data_ptr()
-        x_data_size = self.uvit3.inputs[0]["size"]
-        text_data_ptr = self.uvit3.inputs[2]["tensor"].data_ptr()
-        text_data_size = self.uvit3.inputs[2]["size"]
-        text_N0_data_ptr = self.uvit3.inputs[3]["tensor"].data_ptr()
-        text_N0_data_size = self.uvit3.inputs[3]["size"]
-        text_N1_data_ptr = self.uvit3.inputs[4]["tensor"].data_ptr()
-        text_N1_data_size = self.uvit3.inputs[4]["size"]
-        text_N2_data_ptr = self.uvit3.inputs[5]["tensor"].data_ptr()
-        text_N2_data_size = self.uvit3.inputs[5]["size"]
+    def dpm_solver_third_update(self, z: torch.Tensor, clip_img: torch.Tensor, idx: int):
+        z_data_ptr = self.uvit3.inputs[0]["tensor"].data_ptr()
+        z_data_size = self.uvit3.inputs[0]["size"]
+        clip_img_data_ptr = self.uvit3.inputs[1]["tensor"].data_ptr()
+        clip_img_data_size = self.uvit3.inputs[1]["size"]
+        text_data_ptr = self.uvit3.inputs[3]["tensor"].data_ptr()
+        text_data_size = self.uvit3.inputs[3]["size"]
+        text_N0_data_ptr = self.uvit3.inputs[4]["tensor"].data_ptr()
+        text_N0_data_size = self.uvit3.inputs[4]["size"]
+        text_N1_data_ptr = self.uvit3.inputs[5]["tensor"].data_ptr()
+        text_N1_data_size = self.uvit3.inputs[5]["size"]
+        text_N2_data_ptr = self.uvit3.inputs[6]["tensor"].data_ptr()
+        text_N2_data_size = self.uvit3.inputs[6]["size"]
 
-        self.uvit3.inputs[1]["tensor"][0] = idx
-        cudart.cudaMemcpy(x_data_ptr, x.contiguous().data_ptr(), x_data_size, cudart.cudaMemcpyKind.cudaMemcpyDeviceToDevice)
+        self.uvit3.inputs[2]["tensor"][0] = idx
+        cudart.cudaMemcpy(z_data_ptr, z.data_ptr(), z_data_size, cudart.cudaMemcpyKind.cudaMemcpyDeviceToDevice)
+        cudart.cudaMemcpy(clip_img_data_ptr, clip_img.data_ptr(), clip_img_data_size, cudart.cudaMemcpyKind.cudaMemcpyDeviceToDevice)
         cudart.cudaMemcpy(text_data_ptr, self.clip.outputs[0]["tensor"].data_ptr(), text_data_size, cudart.cudaMemcpyKind.cudaMemcpyDeviceToDevice)
         cudart.cudaMemcpy(text_N0_data_ptr, self.text_N[idx].data_ptr(), text_N0_data_size, cudart.cudaMemcpyKind.cudaMemcpyDeviceToDevice)     
         cudart.cudaMemcpy(text_N1_data_ptr, self.text_N[idx + 1].data_ptr(), text_N1_data_size, cudart.cudaMemcpyKind.cudaMemcpyDeviceToDevice)    
         cudart.cudaMemcpy(text_N2_data_ptr, self.text_N[idx + 2].data_ptr(), text_N2_data_size, cudart.cudaMemcpyKind.cudaMemcpyDeviceToDevice) 
         self.uvit3.infer()
-        return self.uvit3.outputs[0]["tensor"]
-                     
+        return self.uvit3.outputs[0]["tensor"], self.uvit3.outputs[1]["tensor"]
+                    
     def process(self, prompt="a dog under the sea", seed=1234, cumulative_time=False) -> np.ndarray:
         torch.manual_seed(seed)
         torch.cuda.manual_seed_all(seed)
-        
         # step1
         t_start = time.time()
         batch_encoding = self.tokenizer([prompt], truncation=True, max_length=77, return_length=True,
@@ -181,25 +164,20 @@ class UnidiffuserText2ImgTRT(object):
             
         # step2
         t_start = time.time()
-        z_init = torch.randn(self.n_samples, *(self.z_shape), device=self.device)  # 1,4,64,64
-        clip_img_init = torch.randn(self.n_samples, 1, self.clip_img_dim, device=self.device)  # 1,1,512
+        z = torch.randn(self.n_samples, *(self.z_shape), device=self.device).contiguous()  # 1,4,64,64
+        clip_img = torch.randn(self.n_samples, 1, self.clip_img_dim, device=self.device).contiguous()  # 1,1,512
         self.text_N = []
         for n in range(self.sample_steps):
             self.text_N.append(torch.randn_like(self.clip.outputs[0]["tensor"]).type(dtype=torch.float32).contiguous().cuda())
-
-        z = einops.rearrange(z_init, 'B C H W -> B (C H W)')
-        clip_img = einops.rearrange(clip_img_init, 'B L D -> B (L D)')
-        x = torch.concat([z, clip_img], dim=-1).contiguous().cuda()  # 1,16896
-
         i = 0
         for order in self.orders:
             idx = i
             if order == 1:
-                x = self.dpm_solver_first_update(x, idx)
+                z, clip_img = self.dpm_solver_first_update(z, clip_img, idx)
             elif order == 2:
-                x = self.dpm_solver_second_update(x, idx)
+                z, clip_img = self.dpm_solver_second_update(z, clip_img, idx)
             elif order == 3:
-                x = self.dpm_solver_third_update(x, idx)
+                z, clip_img = self.dpm_solver_third_update(z, clip_img, idx)
             else:
                 raise ValueError("Solver order must be 1 or 2 or 3, got {}".format(order))
             i += order
@@ -210,7 +188,7 @@ class UnidiffuserText2ImgTRT(object):
         t_start = time.time()
         z_data_ptr = self.decoder.inputs[0]["tensor"].data_ptr()
         z_data_size = self.decoder.inputs[0]["size"]
-        cudart.cudaMemcpy(z_data_ptr, x.data_ptr(), z_data_size, cudart.cudaMemcpyKind.cudaMemcpyDeviceToDevice)
+        cudart.cudaMemcpy(z_data_ptr, z.data_ptr(), z_data_size, cudart.cudaMemcpyKind.cudaMemcpyDeviceToDevice)
         self.decoder.infer()
         if cumulative_time:
             self.total_decoder_ms += (time.time() - t_start) * 1000

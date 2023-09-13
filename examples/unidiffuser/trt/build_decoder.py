@@ -99,10 +99,8 @@ network = builder.create_network()
 
 with net_guard(network):
     network.set_named_parameters(tensorrt_llm_decoder.named_parameters())
-    x = Tensor(name='x', dtype=trt.float32, shape=[1, 16896])
-    z, _ = x.split([16384, 512], dim=1)
-    z = z.view([1, 4, 64, 64])
-    z = tensorrt_llm_decoder(z)
+    x = Tensor(name='x', dtype=trt.float32, shape=[1, 4, 64, 64])
+    z = tensorrt_llm_decoder(x)
     z.mark_output("z", trt.uint8)
 
 engine = builder.build_engine(network, builder_config)
