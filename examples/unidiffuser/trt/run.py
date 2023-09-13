@@ -61,11 +61,11 @@ prompts = [
 class UnidiffuserText2ImgTRT(object):
     def __init__(self) -> None:
         self.tokenizer = CLIPTokenizer.from_pretrained("openai/clip-vit-large-patch14")
-        self.clip = TRTInfer("outputs/clip_float16.trt")
-        self.uvit1 = TRTInfer("outputs/uvit1_float16.trt")
-        self.uvit2 = TRTInfer("outputs/uvit2_float16.trt")
-        self.uvit3 = TRTInfer("outputs/uvit3_float16.trt")
-        self.decoder = TRTInfer("outputs/decoder_float16.trt")
+        self.clip = TRTInfer("outputs/clip_float16.trt", use_cuda_graph=False)
+        self.uvit1 = TRTInfer("outputs/uvit1_float16.trt", use_cuda_graph=False)
+        self.uvit2 = TRTInfer("outputs/uvit2_float16.trt", use_cuda_graph=False)
+        self.uvit3 = TRTInfer("outputs/uvit3_float16.trt", use_cuda_graph=False)
+        self.decoder = TRTInfer("outputs/decoder_float16.trt", use_cuda_graph=False)
         
         self.device = 'cuda'
         self.n_samples = 1

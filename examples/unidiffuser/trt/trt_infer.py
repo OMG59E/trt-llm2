@@ -58,7 +58,7 @@ def memcpy_device_to_host(host_arr: np.ndarray, device_ptr: int):
 class TRTInfer(object):
     """Implements inference for the Model TensorRT engine.
     """
-    def __init__(self, engine_path):
+    def __init__(self, engine_path, use_cuda_graph=True):
         # Load TRT engine
         self.logger = trt.Logger(trt.Logger.INFO)
         trt.init_libnvinfer_plugins(self.logger, namespace="")
@@ -106,6 +106,10 @@ class TRTInfer(object):
         assert len(self.outputs) > 0
         assert len(self.buffers) > 0
 
+        self.use_cuda_graph = use_cuda_graph
+        
+        if not self.use_cuda_graph:
+            return
         _, self.stream = cudart.cudaStreamCreate()
         # do inference before CUDA graph capture
         self.context.execute_async_v3(self.stream)
@@ -116,6 +120,8 @@ class TRTInfer(object):
         e, self.instance = cudart.cudaGraphInstantiate(self.graph, 0)
 
     def infer(self):
-        cudart.cudaGraphLaunch(self.instance, self.stream)
-        cudart.cudaStreamSynchronize(self.stream)
-
+        if self.use_cuda_graph:
+            cudart.cudaGraphLaunch(self.instance, self.stream)
+            cudart.cudaStreamSynchronize(self.stream)
+        else:
+            self.context.execute_v2(self.buffers)
