@@ -15,7 +15,7 @@ if not os.path.exists(weight_dir):
     os.makedirs(weight_dir)
     
 # clip
-transformer = CLIPTextModel.from_pretrained("openai/clip-vit-large-patch14")
+transformer = CLIPTextModel.from_pretrained("../pytorch/models/clip-vit-large-patch14")
 for name, param in transformer.named_parameters():
     if "weight" not in name and "bias" not in name:
         continue
