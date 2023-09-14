@@ -20,13 +20,13 @@
 
 </div>
 
-经过**fp16 + batch + cudaGraph**优化后，最终获得各模型加速比分别为**CLIP**部分约**4.2**倍、**UViT**部分约**2.4**倍、**Decoder**部分约**4.7**倍，整个**pipeline**加速比约**2.4**倍；同时使用初赛的**PD**评估方法，测试40个prompt + seed得到平均PD得分**6.883**。
+经过**fp16 + batch + cudaGraph + fusion**优化后，最终获得各模型加速比分别为**CLIP**部分约**4.2**倍、**UViT**部分约**2.4**倍、**Decoder**部分约**4.7**倍，整个**pipeline**加速比约**2.5**倍；同时使用初赛的**PD**评估方法，测试40个prompt + seed得到平均PD得分**4.985**。
 
 **编译、运行、测试步骤如下**：
 
 ```shell
 docker pull registry.cn-hangzhou.aliyuncs.com/trt-hackathon/trt-hackathon:final_v1  # 拉取镜像
-docker run --name=trt2023 -it registry.cn-hangzhou.aliyuncs.com/trt-hackathon/trt-hackathon:final_v1 bash  # 实例化容器
+docker run --gpus "device=0" --name=trt2023 -it registry.cn-hangzhou.aliyuncs.com/trt-hackathon/trt-hackathon:final_v1 bash  # 实例化容器
 git clone https://gitee.com/xingwg/trt-llm2.git
 cd trt-llm2/examples/unidiffuser/pytorch
 # 预先将模型下载到trt-llm2/examples/unidiffuser/pytorch/models，下载地址见“主要开发工作部分”
@@ -38,17 +38,19 @@ python build_uvit.py  # 编译UViT fp16
 cd plugin && mkdir -p build && cd build && cmake -DCMAKE_BUILD_TYPE=Release .. && make  # 编译groupnorm插件
 cd ../../ && python build_decoder.py  # 编译 decoder fp16
 python run.py   # 执行trt pipeline, 同时生成40张测试图片
-python compute_score.py  # 进行PD评估
+python compute_score.py  # 进行PD评估, torch会下载模型pt_inception-2015-12-05-6726825d.pth，可能会比较慢
 ```
 
 ### 主要开发工作
 
 Unidiffuser模型的"文生图"任务共包含4个模型，分别是:
 
-- **clip** - [https://huggingface.co/openai/clip-vit-large-patch14](https://huggingface.co/openai/clip-vit-large-patch14)(代码自行下载，无需手动)
+- **clip** - [https://huggingface.co/openai/clip-vit-large-patch14](https://huggingface.co/openai/clip-vit-large-patch14)(代码自行下载，也可手动)
 - **caption_decoder** - [https://huggingface.co/thu-ml/unidiffuser-v1/blob/main/caption_decoder.pth](https://huggingface.co/thu-ml/unidiffuser-v1/blob/main/caption_decoder.pth)
 - **uvit** - [https://huggingface.co/thu-ml/unidiffuser-v1/blob/main/uvit_v1.pth](https://huggingface.co/thu-ml/unidiffuser-v1/blob/main/uvit_v1.pth)
 - **autoencoder** - [https://huggingface.co/thu-ml/unidiffuser-v1/blob/main/autoencoder_kl.pth](https://huggingface.co/thu-ml/unidiffuser-v1/blob/main/autoencoder_kl.pth)
+
+打包后所有模型，网盘链接: https://pan.baidu.com/s/14j0SR-XLCVquRgshICHT4w?pwd=y9fb 提取码: y9fb，方便下载。
 
 "文生图"任务的整个流程包括三步如下：
 
@@ -115,15 +117,29 @@ TensorRT-LLM的主要主要算子实现在**tensorrt_llm.layers**、以及**tens
 
 - 通过trtexec观察逐层Decoder模型，发现时间主要好在Conv、GroupNorm、Upsample，相对也无优化空间：
 
-- 分析整体pipeline发现uvit推理的前处理和后处理调用noise_schedule部分GPU利用率很低，增减整体时延，**待优化**：
+- 分析整体pipeline发现uvit推理的前处理和后处理调用noise_schedule部分GPU利用率很低，通过将uvit每次迭代的前处理部分通过预先计算打表的方式吃进trt中，后处理的点乘加操作也合进trt中，以及将原代码中一次迭代三次推理合并为一次即优化后图中246ms部分，一次迭代两次推理合并为一次163ms 可以将整个timeline的GPU占用几乎压满，缩短整体时延约150ms：
 
 <div align=center>
-
 <img src=docs/timeline.png width=70% />
-
+</br>
+<font color="AAAAAA">优化前</font>
 </div>
 
-- 使用cudaGraph减少kernel登录时间，这里有坑用cudaGraph的情况下，**nsys profile**会有问题。
+</br>
+
+<div align=center>
+<img src=docs/timeline2.png width=70% />
+</br>
+<font color="AAAAAA">优化后</font>
+</div>
+
+- 进一步使用cudaGraph减少kernel的launch开销，这里有坑用cudaGraph的情况下，**nsys profile**会有问题。
+
+- 在完成fp16整个pipeline的优化后，考虑将uvit进行PTQ(因为uvit占据整个timeline的98%，其余收益比较小)，尝试后发现int8会破坏myelin的融合如下的巨大block，反而增加推理时延。
+
+```shell
+[09/10/2023-07:02:34] [I]     3345.99      81.6096      79.3160      99.6   {ForeignNode[UViTNet/CONSTANT_8...UViTNet/ELEMENTWISE_DIV_0]}
+```
 
 ### 优化效果
 
@@ -131,16 +147,18 @@ TensorRT-LLM的主要主要算子实现在**tensorrt_llm.layers**、以及**tens
 
 <div align=center>
 
-|Model(bs=1)|PyTorch-FP32|PyTorch-FP16(baseline, uvit-fp16)|TRT-FP32 + CudaGraph|TRT-FP16|TRT-FP16 + CudaGraph|
-|-|-|-|-|-|-|
-|clip + captution_encoder|6.996|6.936|2.468|2.135|1.631|
-|uvit|270.409|211.132|254.555|103.029|88.406|
-|decoder|258.488|223.529|137.656|53.686|47.137|
-|pipeline|13786.638|10787.720|12868.122|5207.594|4469.315|
+|Model(bs=1)|PyTorch-FP32|PyTorch-FP16(baseline, uvit-fp16)|TRT-FP32 + CudaGraph|TRT-FP16|TRT-FP16 + CudaGraph|TRT-FP16 + CudaGraph + Fusion|
+|-|-|-|-|-|-|-|
+|clip + captution_encoder|6.996|6.936|2.468|2.135|1.631|1.67|
+|uvit|270.409|211.132|254.555|103.029|88.406|85.280|
+|decoder|258.488|223.529|137.656|53.686|47.137|46.837|
+|pipeline|13786.638|10787.720|12868.122|5207.594|4469.315|4312.749|
 
 </div>
 
-- 精度，使用初赛的PD评估方法，评估40张图的平均PD score：6.883
+其中uvit需要迭代50次
+
+- 精度，使用初赛的PD评估方法，评估40张图的平均PD score：4.985
 
 ### Bug报告（可选）
 
@@ -176,4 +194,4 @@ root@trt2023:~/workspace/tensorrt_llm_july-release-v1/examples/gpt#
 
 ### 经验与体会（可选）
 
-欢迎在这里总结经验，抒发感慨。
+本次比赛收获很大，开始对大模型仅算是听过，现在算是有了简单认识；也收获了很多TRT的优化经验，比如实现plugin的时候可以考虑到输出的format，适合后续layer的输入format，避免reformatting操作、还有cudaGraph、以及尽量将前后处理吃到TRT中；作为TRT-LLM的尝鲜者，熟悉了API、Plugin的使用，模型的搭建、构建，还是需要花时间摸索的，有点门槛；也有些遗憾没有摸到kv-cache、smooth_quant等，最后还算是完成了比赛吧，unidiffuser整个pipeline获得了2.5倍左右加速。
