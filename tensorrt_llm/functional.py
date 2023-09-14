@@ -2054,14 +2054,6 @@ def gelu(x: Tensor) -> Tensor:
     '''
     return 0.5 * x * (
         tanh(math.sqrt(2.0 / math.pi) * (x + 0.044715 * pow(x, 3.0))) + 1.0)
-    
-
-def quick_gelu(x: Tensor) -> Tensor:
-    '''
-    Applies GELU approximation that is fast but somewhat inaccurate. 
-    See: https://github.com/hendrycks/GELUs
-    '''
-    return x * sigmoid(1.702 * x)
 
 
 def geglu(x: Tensor) -> Tensor:
@@ -3399,7 +3391,6 @@ ACT2FN = {
     'softplus': softplus,
     'swiglu': swiglu,
     'fast-swiglu': swiglu,
-    'quick_gelu': quick_gelu,
 }
 
 GATED_ACT_2_ACT = {

@@ -4,10 +4,18 @@ from typing import Tuple, Any
 import numpy as np
 import tensorrt as trt
 from tensorrt_llm.parameter import Tensor, constant
-from tensorrt_llm.functional import slice, matmul, softmax, ACT2FN
+from tensorrt_llm.functional import slice, matmul, softmax, sigmoid
 from tensorrt_llm.layers import LayerNorm, Embedding, Linear
 from tensorrt_llm.module import Module, ModuleList
 from tensorrt_llm._utils import np_dtype_to_trt
+
+
+def quick_gelu(x: Tensor) -> Tensor:
+    '''
+    Applies GELU approximation that is fast but somewhat inaccurate. 
+    See: https://github.com/hendrycks/GELUs
+    '''
+    return x * sigmoid(1.702 * x)
 
 
 class ModelOutput(OrderedDict):
@@ -205,7 +213,7 @@ class CLIPMLP(Module):
     def __init__(self, hidden_size, intermediate_size, hidden_act, dtype):
         super().__init__()
         self.dtype = dtype
-        self.activation_fn = ACT2FN[hidden_act]
+        self.activation_fn = quick_gelu
         self.fc1 = Linear(hidden_size, intermediate_size, dtype=self.dtype)
         self.fc2 = Linear(intermediate_size, hidden_size, dtype=self.dtype)
 
