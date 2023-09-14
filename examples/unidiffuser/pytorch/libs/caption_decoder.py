@@ -24,29 +24,29 @@ class ClipCaptionModel(nn.Module):
     def get_dummy_token(self, batch_size: int, device: torch.device) -> torch.Tensor:
         return torch.zeros(batch_size, self.prefix_length, dtype=torch.int64, device=device)
 
-    def forward(self, tokens: torch.Tensor, prefix: torch.Tensor, mask: Optional[torch.Tensor] = None,
-                labels: Optional[torch.Tensor] = None):
-        """
-        : param tokens: (Tensor) [N x max_seq_len] eg. [4 X 33]
-        : param prefix: (Tensor) [N x prefix_length x 768] eg. [4 x 77 x 768]
-        : param mask: (Tensor) [N x (prefix_length + max_seq_len) x 768] eg. [4 x 110 x768]
+    # def forward(self, tokens: torch.Tensor, prefix: torch.Tensor, mask: Optional[torch.Tensor] = None,
+    #             labels: Optional[torch.Tensor] = None):
+    #     """
+    #     : param tokens: (Tensor) [N x max_seq_len] eg. [4 X 33]
+    #     : param prefix: (Tensor) [N x prefix_length x 768] eg. [4 x 77 x 768]
+    #     : param mask: (Tensor) [N x (prefix_length + max_seq_len) x 768] eg. [4 x 110 x768]
 
-        : attribute embedding_text: (Tensor) [N x max_seq_len x 768] eg. [4 x 33 x 768]
-        : attribute embedding_cat: (Tensor) [N x (prefix_length + max_seq_len) x 768] eg. [4 x 110 x 768]
-        """
-        embedding_text = self.gpt.transformer.wte(tokens)
-        hidden = self.encode_prefix(prefix)
-        prefix = self.decode_prefix(hidden)
-        embedding_cat = torch.cat((prefix, embedding_text), dim=1)
+    #     : attribute embedding_text: (Tensor) [N x max_seq_len x 768] eg. [4 x 33 x 768]
+    #     : attribute embedding_cat: (Tensor) [N x (prefix_length + max_seq_len) x 768] eg. [4 x 110 x 768]
+    #     """
+    #     embedding_text = self.gpt.transformer.wte(tokens)
+    #     hidden = self.encode_prefix(prefix)
+    #     prefix = self.decode_prefix(hidden)
+    #     embedding_cat = torch.cat((prefix, embedding_text), dim=1)
 
-        if labels is not None:
-            dummy_token = self.get_dummy_token(tokens.shape[0], tokens.device)
-            labels = torch.cat((dummy_token, tokens), dim=1)
-        out = self.gpt(inputs_embeds=embedding_cat, labels=labels, attention_mask=mask)
-        if self.hidden_dim is not None:
-            return out, hidden
-        else:
-            return out
+    #     if labels is not None:
+    #         dummy_token = self.get_dummy_token(tokens.shape[0], tokens.device)
+    #         labels = torch.cat((dummy_token, tokens), dim=1)
+    #     out = self.gpt(inputs_embeds=embedding_cat, labels=labels, attention_mask=mask)
+    #     if self.hidden_dim is not None:
+    #         return out, hidden
+    #     else:
+    #         return out
 
     def encode_decode_prefix(self, prefix):
         return self.decode_prefix(self.encode_prefix(prefix))
@@ -54,12 +54,12 @@ class ClipCaptionModel(nn.Module):
     def __init__(self, prefix_length: int, hidden_dim=None):
         super(ClipCaptionModel, self).__init__()
         self.prefix_length = prefix_length
-        eos = '<|EOS|>'
-        special_tokens_dict = {'eos_token': eos}
-        base_tokenizer = GPT2Tokenizer.from_pretrained('gpt2')
-        base_tokenizer.add_special_tokens(special_tokens_dict)
-        self.gpt = GPT2LMHeadModel.from_pretrained('gpt2', eos_token_id=base_tokenizer.eos_token_id)
-        self.gpt.resize_token_embeddings(len(base_tokenizer))
+        # eos = '<|EOS|>'
+        # special_tokens_dict = {'eos_token': eos}
+        # base_tokenizer = GPT2Tokenizer.from_pretrained('gpt2')
+        # base_tokenizer.add_special_tokens(special_tokens_dict)
+        # self.gpt = GPT2LMHeadModel.from_pretrained('gpt2', eos_token_id=base_tokenizer.eos_token_id)
+        # self.gpt.resize_token_embeddings(len(base_tokenizer))
 
         self.hidden_dim = hidden_dim
         self.encode_prefix = nn.Linear(768, hidden_dim) if hidden_dim is not None else nn.Identity()
@@ -233,10 +233,10 @@ class CaptionDecoder(object):
         if hidden_dim < 0:
             hidden_dim = None
         # tokenizer initialize
-        eos = '<|EOS|>'
-        special_tokens_dict = {'eos_token': eos}
-        self.tokenizer = GPT2Tokenizer.from_pretrained('gpt2')
-        self.tokenizer.add_special_tokens(special_tokens_dict)
+        # eos = '<|EOS|>'
+        # special_tokens_dict = {'eos_token': eos}
+        # self.tokenizer = GPT2Tokenizer.from_pretrained('gpt2')
+        # self.tokenizer.add_special_tokens(special_tokens_dict)
 
         # model initialize
         feature_length = 77
@@ -259,23 +259,23 @@ class CaptionDecoder(object):
     def encode_prefix(self, features):
         return self.caption_model.encode_prefix(features)
 
-    def generate_captions(self, features):  # the low dimension representation of clip feature
-        """
-        generate captions given features
-        : param features : (tensor([B x L x D]))
-        : return generated_text: (list([L]))
-        """
+    # def generate_captions(self, features):  # the low dimension representation of clip feature
+    #     """
+    #     generate captions given features
+    #     : param features : (tensor([B x L x D]))
+    #     : return generated_text: (list([L]))
+    #     """
 
-        # generate config
-        use_beam_search = True
+    #     # generate config
+    #     use_beam_search = True
 
-        features = torch.split(features, 1, dim=0)
-        generated_captions = []
-        with torch.no_grad():
-            for feature in features:
-                feature = self.caption_model.decode_prefix(feature.to(self.device))  # back to the clip feature
-                if use_beam_search:
-                    generated_captions.append(generate_beam(self.caption_model, self.tokenizer, embed=feature)[0])
-                else:
-                    generated_captions.append(generate2(self.caption_model, self.tokenizer, embed=feature))
-        return generated_captions
+    #     features = torch.split(features, 1, dim=0)
+    #     generated_captions = []
+    #     with torch.no_grad():
+    #         for feature in features:
+    #             feature = self.caption_model.decode_prefix(feature.to(self.device))  # back to the clip feature
+    #             if use_beam_search:
+    #                 generated_captions.append(generate_beam(self.caption_model, self.tokenizer, embed=feature)[0])
+    #             else:
+    #                 generated_captions.append(generate2(self.caption_model, self.tokenizer, embed=feature))
+    #     return generated_captions
