@@ -69,8 +69,8 @@ class UnidiffuserText2ImgTorch(object):
         self.scale = 7.
         self.t2i_cfg_mode = "true_uncond"
 
-        self.tokenizer = CLIPTokenizer.from_pretrained("openai/clip-vit-large-patch14")
-        self.transformer = CLIPTextModel.from_pretrained("openai/clip-vit-large-patch14")
+        self.tokenizer = CLIPTokenizer.from_pretrained("models/clip-vit-large-patch14")
+        self.transformer = CLIPTextModel.from_pretrained("models/clip-vit-large-patch14")
         self.transformer.cuda().eval()
         self.caption_decoder = CaptionDecoder(device=self.device, pretrained_path="models/caption_decoder.pth", hidden_dim=64)
         
