@@ -38,6 +38,7 @@ python build_uvit.py  # 编译UViT fp16
 cd plugin && mkdir -p build && cd build && cmake -DCMAKE_BUILD_TYPE=Release .. && make  # 编译groupnorm插件
 cd ../../ && python build_decoder.py  # 编译 decoder fp16
 python run.py   # 执行trt pipeline, 同时生成40张测试图片
+pip install pytorch_fid  # 安装pytorch_fid
 python compute_score.py  # 进行PD评估, torch会下载模型pt_inception-2015-12-05-6726825d.pth，可能会比较慢
 ```
 
