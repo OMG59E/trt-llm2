@@ -159,7 +159,19 @@ TensorRT-LLM的主要主要算子实现在**tensorrt_llm.layers**、以及**tens
 
 其中uvit需要迭代50次
 
-- 精度，使用初赛的PD评估方法，评估40张图的平均PD score：4.985
+- 精度，使用初赛的PD评估方法，评估40张图的平均PD score：4.985，具体效果如图：
+
+<div align=center>
+<img src=docs/torch.png />
+</br>
+<font color="AAAAAA">torch</font>
+</div>
+
+<div align=center>
+<img src=docs/trt.png />
+</br>
+<font color="AAAAAA">tensorrt</font>
+</div>
 
 ### Bug报告（可选）
 
