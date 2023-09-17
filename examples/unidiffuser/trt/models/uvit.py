@@ -93,25 +93,13 @@ class PatchEmbed(Module):
         return x
 
 
-def timestep_embedding(timesteps: Tensor, dim, max_period=10000) -> Tensor :
-    """
-    Create sinusoidal timestep embeddings.
-    :param timesteps: a 1-D Tensor of N indices, one per batch element. These may be fractional.
-    :param dim: the dimension of the output.
-    :param max_period: controls the minimum frequency of the embeddings.
-    :return: an [N x dim] Tensor of positional embeddings.
-    """
+def timestep_embedding(timesteps, dim, max_period=10000):
     half = dim // 2
-    freqs = torch.exp(-math.log(max_period) * torch.arange(start=0, end=half, dtype=torch.float32) / half)[None]
-    # freqs = constant(torch.cat([freqs, freqs], dim=0).detach().cpu().contiguous().numpy())
-    freqs = constant(freqs.detach().cpu().contiguous().numpy())  # 1,768
-    timesteps_shape = list(timesteps.size())
-    timesteps_shape.append(1)  # [bs,1]
-    # args = timesteps.view(shape=timesteps_shape).cast(trt.float32) * freqs  # [bs, 768]
-    args = matmul(timesteps.view(shape=timesteps_shape).cast(trt.float32), freqs)  # [bs, 768]
-    embedding = concat([cos(args), sin(args)], dim=1)  # [bs, 1536]
+    freqs = torch.exp(-math.log(max_period) * torch.arange(start=0, end=half, dtype=torch.float32) / half).to(device=timesteps.device)
+    args = timesteps[:, None].type(torch.float32) * freqs[None]
+    embedding = torch.cat([torch.cos(args), torch.sin(args)], dim=-1)
     if dim % 2:
-        embedding = concat([embedding, constant(torch.zeros_like(embedding[:, :1]).detach().cpu().contiguous().numpy())], dim=1)
+        embedding = torch.cat([embedding, torch.zeros_like(embedding[:, :1])], dim=-1)
     return embedding
 
 
@@ -200,8 +188,10 @@ class UViT(Module):
         _, _, H, W = img.shape
 
         img = self.patch_embed(img)
-        t_img_token = self.time_img_embed(timestep_embedding(t_img, self.embed_dim))
-        t_text_token = self.time_text_embed(timestep_embedding(t_text, self.embed_dim))
+        # t_img_token = self.time_img_embed(timestep_embedding(t_img, self.embed_dim))
+        # t_text_token = self.time_text_embed(timestep_embedding(t_text, self.embed_dim))
+        t_img_token = t_img
+        t_text_token = t_text
         t_img_token = unsqueeze(t_img_token, axis=1)  # bs, 1, 1536
         t_text_token = unsqueeze(t_text_token, axis=1)  # 2*bs, 1, 1536
 
@@ -328,7 +318,7 @@ class UViTNet1(Module):
         self.noise_schedule = NoiseScheduleVP(schedule='discrete', betas=torch.tensor(self._betas.numpy()).float())
 
         self.sample_steps = 50
-        self.timesteps = torch.linspace(1.0, 0.001, self.sample_steps + 1).type(torch.float32)   # time_uniform
+        self.timesteps = torch.linspace(1.0, 0.001, self.sample_steps + 1, dtype=torch.float32)   # time_uniform
         self.marginal_lambda = self.noise_schedule.marginal_lambda(self.timesteps).type(torch.float32)
         self.marginal_alpha = self.noise_schedule.marginal_alpha(self.timesteps).type(torch.float32)
         self.marginal_std = self.noise_schedule.marginal_std(self.timesteps).type(torch.float32)
@@ -343,15 +333,21 @@ class UViTNet1(Module):
         self.alpha_s2 = torch.exp(self.marginal_log_mean_coeff_inverse).type(torch.float32)
         self.alpha_t = torch.exp(self.marginal_log_mean_coeff).type(torch.float32)
         self.marginal_lambda_exp = torch.exp(self.marginal_lambda).type(torch.float32)
+
+        self.timestep_embedding = timestep_embedding(self.timesteps * 1000.0, self.nnet.embed_dim).type(torch.float32)
         
     def model_fn(self, x, timesteps, text, text_N, sigma, alpha):
         bs = x.shape[0]
         z, clip_img = split(x)
-        t_text0 = constant(np.zeros(shape=(bs,), dtype=np.int32))
-        t_text1 = constant(np.ones(shape=(bs,), dtype=np.int32) * 1000)
+        # t_text0 = constant(np.zeros(shape=(bs,), dtype=np.int32))
+        # t_text1 = constant(np.ones(shape=(bs,), dtype=np.int32) * 1000)
+        # t_text = concat([t_text0, t_text1], dim=0)  # 2*bs,
+        t_text0 = torch.zeros([bs,], dtype=torch.int32)
+        t_text1 = torch.ones([bs,], dtype=torch.int32) * 1000
+        t_text = timestep_embedding(torch.cat([t_text0, t_text1], dim=0), self.nnet.embed_dim)
+        t_text = constant(t_text.detach().cpu().numpy())
         data_type = constant(np.zeros(shape=(bs,), dtype=np.int32) + 1)
         text = concat([text, text_N], dim=0)  # 2*bs, 77, 64
-        t_text = concat([t_text0, t_text1], dim=0)  # 2*bs,
         z_out, clip_img_out = self.nnet(z, clip_img, text=text, t_img=timesteps, t_text=t_text, data_type=data_type)
         x_out = combine(z_out, clip_img_out)
         x_out0, x_out1 = x_out.split([1, 1], dim=0)
@@ -360,7 +356,8 @@ class UViTNet1(Module):
         return x_out
     
     def forward(self, z: Tensor, clip_img: Tensor, idx: Tensor, text: Tensor, text_N: Tensor) -> Tensor:
-        timesteps = unsqueeze(constant(self.timesteps.detach().cpu().numpy()), axis=0)  # [1, 51]
+        # timesteps = unsqueeze(constant(self.timesteps.detach().cpu().numpy()), axis=0)  # [1, 51]
+        _timestep_embedding = unsqueeze(constant(self.timestep_embedding.detach().cpu().numpy()), axis=0)  # [1, 51, 1536]
         marginal_alpha = unsqueeze(constant(self.marginal_alpha.detach().cpu().numpy()), axis=0)  # [1, 51]
         marginal_std = unsqueeze(constant(self.marginal_std.detach().cpu().numpy()), axis=0)  # [1, 51]        
         marginal_lambda_exp = unsqueeze(constant(self.marginal_lambda_exp.detach().cpu().numpy()), axis=0)  # [1, 51]
@@ -372,7 +369,8 @@ class UViTNet1(Module):
         sigma_s = select(marginal_std, dim=1, index=idx)
         sigma_t = select(marginal_std, dim=1, index=idx + 1)
 
-        ts = select(timesteps, dim=1, index=idx) * 1000.
+        # ts = select(timesteps, dim=1, index=idx) * 1000.
+        ts = select(_timestep_embedding, dim=1, index=idx)
         alpha = select(marginal_alpha, dim=1, index=idx)
         sigma = select(marginal_std, dim=1, index=idx)
         noise_s = self.model_fn(x, ts, text, text_N, sigma, alpha)
@@ -404,7 +402,7 @@ class UViTNet2(Module):
         self.noise_schedule = NoiseScheduleVP(schedule='discrete', betas=torch.tensor(self._betas.numpy()).float())
 
         self.sample_steps = 50
-        self.timesteps = torch.linspace(1.0, 0.001, self.sample_steps + 1).type(torch.float32)   # time_uniform
+        self.timesteps = torch.linspace(1.0, 0.001, self.sample_steps + 1, dtype=torch.float32)   # time_uniform
         self.marginal_lambda = self.noise_schedule.marginal_lambda(self.timesteps).type(torch.float32)
         self.marginal_alpha = self.noise_schedule.marginal_alpha(self.timesteps).type(torch.float32)
         self.marginal_std = self.noise_schedule.marginal_std(self.timesteps).type(torch.float32)
@@ -419,15 +417,21 @@ class UViTNet2(Module):
         self.alpha_s2 = torch.exp(self.marginal_log_mean_coeff_inverse).type(torch.float32)
         self.alpha_t = torch.exp(self.marginal_log_mean_coeff).type(torch.float32)
         self.marginal_lambda_exp = torch.exp(self.marginal_lambda).type(torch.float32)
+
+        self.timestep_embedding = timestep_embedding(self.timesteps * 1000.0, self.nnet.embed_dim).type(torch.float32)
     
     def model_fn(self, x, timesteps, text, text_N, sigma, alpha):
         bs = x.shape[0]
         z, clip_img = split(x)
-        t_text0 = constant(np.zeros(shape=(bs,), dtype=np.int32))
-        t_text1 = constant(np.ones(shape=(bs,), dtype=np.int32) * 1000)
+        # t_text0 = constant(np.zeros(shape=(bs,), dtype=np.int32))
+        # t_text1 = constant(np.ones(shape=(bs,), dtype=np.int32) * 1000)
+        # t_text = concat([t_text0, t_text1], dim=0)  # 2*bs,
+        t_text0 = torch.zeros([bs,], dtype=torch.int32)
+        t_text1 = torch.ones([bs,], dtype=torch.int32) * 1000
+        t_text = timestep_embedding(torch.cat([t_text0, t_text1], dim=0), self.nnet.embed_dim)
+        t_text = constant(t_text.detach().cpu().numpy())
         data_type = constant(np.zeros(shape=(bs,), dtype=np.int32) + 1)
         text = concat([text, text_N], dim=0)  # 2*bs, 77, 64
-        t_text = concat([t_text0, t_text1], dim=0)  # 2*bs,
         z_out, clip_img_out = self.nnet(z, clip_img, text=text, t_img=timesteps, t_text=t_text, data_type=data_type)
         x_out = combine(z_out, clip_img_out)
         x_out0, x_out1 = x_out.split([1, 1], dim=0)
@@ -436,7 +440,8 @@ class UViTNet2(Module):
         return x_out
     
     def forward(self, z: Tensor, clip_img: Tensor, idx: Tensor, text: Tensor, text_N0: Tensor, text_N1: Tensor) -> Tensor:
-        timesteps = unsqueeze(constant(self.timesteps.detach().cpu().numpy()), axis=0)  # [1, 51]
+        # timesteps = unsqueeze(constant(self.timesteps.detach().cpu().numpy()), axis=0)  # [1, 51]
+        _timestep_embedding = unsqueeze(constant(self.timestep_embedding.detach().cpu().numpy()), axis=0)  # [1, 51, 1536]
         marginal_alpha = unsqueeze(constant(self.marginal_alpha.detach().cpu().numpy()), axis=0)  # [1, 51]
         marginal_std = unsqueeze(constant(self.marginal_std.detach().cpu().numpy()), axis=0)  # [1, 51]
         marginal_lambda = unsqueeze(constant(self.marginal_lambda.detach().cpu().numpy()), axis=0)
@@ -460,14 +465,16 @@ class UViTNet2(Module):
         phi_1 = select(marginal_lambda_exp, dim=1, index=idx) / select(marginal_lambda_exp, dim=1, index=idx + 2) - 1.
 
         # 1
-        ts = select(timesteps, dim=1, index=idx) * 1000.
+        # ts = select(timesteps, dim=1, index=idx) * 1000.
+        ts = select(_timestep_embedding, dim=1, index=idx)
         alpha = select(marginal_alpha, dim=1, index=idx)
         sigma = select(marginal_std, dim=1, index=idx)
         noise_s = self.model_fn(x, ts, text, text_N0, sigma, alpha)
         x_s1 = (sigma_s1 / sigma_s) * x - (alpha_s1 * phi_11) * noise_s
 
         # 2
-        ts = select(timesteps, dim=1, index=idx + 1) * 1000.
+        # ts = select(timesteps, dim=1, index=idx + 1) * 1000.
+        ts = select(_timestep_embedding, dim=1, index=idx + 1)
         alpha = select(marginal_alpha_inverse, dim=1, index=idx + 1)
         sigma = select(marginal_std_inverse, dim=1, index=idx + 1)
         noise_s1 = self.model_fn(x_s1, ts, text, text_N1, sigma, alpha)
@@ -499,7 +506,7 @@ class UViTNet3(Module):
         self.noise_schedule = NoiseScheduleVP(schedule='discrete', betas=torch.tensor(self._betas.numpy()).float())
 
         self.sample_steps = 50
-        self.timesteps = torch.linspace(1.0, 0.001, self.sample_steps + 1).type(torch.float32)   # time_uniform
+        self.timesteps = torch.linspace(1.0, 0.001, self.sample_steps + 1, dtype=torch.float32)   # time_uniform
         self.marginal_lambda = self.noise_schedule.marginal_lambda(self.timesteps).type(torch.float32)
         self.marginal_alpha = self.noise_schedule.marginal_alpha(self.timesteps).type(torch.float32)
         self.marginal_std = self.noise_schedule.marginal_std(self.timesteps).type(torch.float32)
@@ -514,15 +521,21 @@ class UViTNet3(Module):
         self.alpha_s2 = torch.exp(self.marginal_log_mean_coeff_inverse).type(torch.float32)
         self.alpha_t = torch.exp(self.marginal_log_mean_coeff).type(torch.float32)
         self.marginal_lambda_exp = torch.exp(self.marginal_lambda).type(torch.float32)
+
+        self.timestep_embedding = timestep_embedding(self.timesteps * 1000.0, self.nnet.embed_dim).type(torch.float32)
     
     def model_fn(self, x, timesteps, text, text_N, sigma, alpha):
         bs = x.shape[0]
         z, clip_img = split(x)
-        t_text0 = constant(np.zeros(shape=(bs,), dtype=np.int32))
-        t_text1 = constant(np.ones(shape=(bs,), dtype=np.int32) * 1000)
+        # t_text0 = constant(np.zeros(shape=(bs,), dtype=np.int32))
+        # t_text1 = constant(np.ones(shape=(bs,), dtype=np.int32) * 1000)
+        # t_text = concat([t_text0, t_text1], dim=0)  # 2*bs,
+        t_text0 = torch.zeros([bs,], dtype=torch.int32)
+        t_text1 = torch.ones([bs,], dtype=torch.int32) * 1000
+        t_text = timestep_embedding(torch.cat([t_text0, t_text1], dim=0), self.nnet.embed_dim)
+        t_text = constant(t_text.detach().cpu().numpy())
         data_type = constant(np.zeros(shape=(bs,), dtype=np.int32) + 1)
         text = concat([text, text_N], dim=0)  # 2*bs, 77, 64
-        t_text = concat([t_text0, t_text1], dim=0)  # 2*bs,
         z_out, clip_img_out = self.nnet(z, clip_img, text=text, t_img=timesteps, t_text=t_text, data_type=data_type)
         x_out = combine(z_out, clip_img_out)
         x_out0, x_out1 = x_out.split([1, 1], dim=0)
@@ -531,7 +544,8 @@ class UViTNet3(Module):
         return x_out
     
     def forward(self, z: Tensor, clip_img: Tensor, idx: Tensor, text: Tensor, text_N0: Tensor, text_N1: Tensor, text_N2: Tensor) -> Tensor:
-        timesteps = unsqueeze(constant(self.timesteps.detach().cpu().numpy()), axis=0)  # [1, 51]
+        # timesteps = unsqueeze(constant(self.timesteps.detach().cpu().numpy()), axis=0)  # [1, 51]
+        _timestep_embedding = unsqueeze(constant(self.timestep_embedding.detach().cpu().numpy()), axis=0)  # [1, 51, 1536]
         marginal_alpha = unsqueeze(constant(self.marginal_alpha.detach().cpu().numpy()), axis=0)  # [1, 51]
         marginal_std = unsqueeze(constant(self.marginal_std.detach().cpu().numpy()), axis=0)  # [1, 51]
         marginal_alpha_inverse = unsqueeze(constant(self.marginal_alpha_inverse.detach().cpu().numpy()), axis=0)
@@ -562,21 +576,24 @@ class UViTNet3(Module):
         phi_2 = phi_1 / (select(marginal_lambda, dim=1, index=idx + 3) - select(marginal_lambda, dim=1, index=idx)) + 1.
 
         # 1
-        ts = select(timesteps, dim=1, index=idx) * 1000.
+        # ts = select(timesteps, dim=1, index=idx) * 1000.
+        ts = select(_timestep_embedding, dim=1, index=idx)
         alpha = select(marginal_alpha, dim=1, index=idx)
         sigma = select(marginal_std, dim=1, index=idx)
         noise_s = self.model_fn(x, ts, text, text_N0, sigma, alpha)
         x_s1 = (sigma_s1 / sigma_s) * x - (alpha_s1 * phi_11) * noise_s
 
         # 2
-        ts = select(timesteps, dim=1, index=idx + 1) * 1000.
+        # ts = select(timesteps, dim=1, index=idx + 1) * 1000.
+        ts = select(_timestep_embedding, dim=1, index=idx + 1)
         alpha = select(marginal_alpha_inverse, dim=1, index=idx + 1)
         sigma = select(marginal_std_inverse, dim=1, index=idx + 1)
         noise_s1 = self.model_fn(x_s1, ts, text, text_N1, sigma, alpha)
         x_s2 = (sigma_s2 / sigma_s) * x - (alpha_s2 * phi_12) * noise_s + (r2 / r1) * (alpha_s2 * phi_22) * (noise_s1 - noise_s)
 
         # 3
-        ts = select(timesteps, dim=1, index=idx + 2) * 1000.
+        # ts = select(timesteps, dim=1, index=idx + 2) * 1000.
+        ts = select(_timestep_embedding, dim=1, index=idx + 2)
         alpha = select(marginal_alpha_inverse, dim=1, index=idx + 2)
         sigma = select(marginal_std_inverse, dim=1, index=idx + 2)
         noise_s2 = self.model_fn(x_s2, ts, text, text_N2, sigma, alpha)

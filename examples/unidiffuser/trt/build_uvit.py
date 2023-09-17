@@ -168,16 +168,16 @@ def save_engine(engine, filepath):
     
 
 tensorrt_llm_uvit1 = UViTNet1()
-tensorrt_llm_uvit2 = UViTNet2()
-tensorrt_llm_uvit3 = UViTNet3()
 tensorrt_llm_uvit1 = init_weight(tensorrt_llm_uvit1)
-tensorrt_llm_uvit2 = init_weight(tensorrt_llm_uvit2)
-tensorrt_llm_uvit3 = init_weight(tensorrt_llm_uvit3)
-
 engine1 = build_engine1(tensorrt_llm_uvit1)
-engine2 = build_engine2(tensorrt_llm_uvit2)
-engine3 = build_engine3(tensorrt_llm_uvit3)
-
 save_engine(engine1, engine1_path)
+
+tensorrt_llm_uvit2 = UViTNet2()
+tensorrt_llm_uvit2 = init_weight(tensorrt_llm_uvit2)
+engine2 = build_engine2(tensorrt_llm_uvit2)
 save_engine(engine2, engine2_path)
+
+tensorrt_llm_uvit3 = UViTNet3()
+tensorrt_llm_uvit3 = init_weight(tensorrt_llm_uvit3)
+engine3 = build_engine3(tensorrt_llm_uvit3)
 save_engine(engine3, engine3_path)
