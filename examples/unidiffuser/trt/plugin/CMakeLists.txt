@@ -35,9 +35,7 @@ set(SRC_FILE_EXTENSIONS h hpp cuh c cpp cu cc)
 set(LINT_DIRS
         common
         groupNormPlugin
-        multiHeadCrossAttentionPlugin
-        multiHeadFlashAttentionPlugin
-        gatherV2Plugin
+        layerNormPlugin
 )
 
 # find all files of interest

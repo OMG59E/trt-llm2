@@ -17,6 +17,7 @@
 #include "NvInfer.h"
 #include "NvInferPlugin.h"
 #include "groupNormPlugin/groupNormPlugin.h"
+#include "layerNormPlugin/layerNormPlugin.h"
 
 #include <algorithm>
 #include <array>
@@ -136,6 +137,7 @@ extern "C"
     bool initLibNvInferPlugins(void* logger, const char* libNamespace)
     {
         nvinfer1::initializeTritonPlugin<nvinfer1::plugin::GroupNormPluginCreator>(logger, libNamespace);
+        nvinfer1::initializeTritonPlugin<nvinfer1::plugin::LayerNormPluginCreator>(logger, libNamespace);
         return true;
     }
 } // extern "C"
