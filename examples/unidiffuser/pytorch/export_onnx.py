@@ -1,4 +1,5 @@
 import torch
+import os
 import einops
 import numpy as np
 import libs.autoencoder
@@ -8,10 +9,13 @@ from libs.caption_decoder import CaptionDecoder
 from transformers import CLIPTokenizer, CLIPTextModel
 
 
+if not os.path.exists("onnx"):
+    os.makedirs("onnx")
+
 class CLIP(torch.nn.Module):
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
-        self.transformer = CLIPTextModel.from_pretrained("openai/clip-vit-large-patch14")
+        self.transformer = CLIPTextModel.from_pretrained("models/clip-vit-large-patch14")
         self.caption_decoder = CaptionDecoder(device="cpu", pretrained_path="models/caption_decoder.pth", hidden_dim=64)
     
     def forward(self, tokens):
@@ -24,12 +28,12 @@ class CLIP(torch.nn.Module):
 n_samples = 1
 prompt = "an elephant under the sea"
 prompts = [prompt] * n_samples
-tokenizer = CLIPTokenizer.from_pretrained("openai/clip-vit-large-patch14")
+tokenizer = CLIPTokenizer.from_pretrained("models/clip-vit-large-patch14")
 batch_encoding = tokenizer(prompts, truncation=True, max_length=77, return_length=True, return_overflowing_tokens=False, padding="max_length", return_tensors="pt")
 tokens = batch_encoding["input_ids"]
 clip_net = CLIP()
 clip_net.eval()
-torch.onnx.export(clip_net, tokens, "CLIP.onnx", opset_version=18, input_names=["input_ids"], output_names=["contexts"])
+torch.onnx.export(clip_net, tokens, "onnx/CLIP.onnx", opset_version=18, input_names=["input_ids"], output_names=["contexts"])
 
 
 class Decoder(torch.nn.Module):
@@ -45,7 +49,7 @@ class Decoder(torch.nn.Module):
 x = torch.randn((1, 4, 64, 64), dtype=torch.float32)
 decoder_net = Decoder()
 decoder_net.eval()
-torch.onnx.export(decoder_net, x, "decoder.onnx", opset_version=18, input_names=["z"], output_names=["samples"])
+torch.onnx.export(decoder_net, x, "onnx/decoder.onnx", opset_version=18, input_names=["z"], output_names=["samples"])
 
 
 def split(x):
@@ -87,11 +91,10 @@ class UViTNet(torch.nn.Module):
         self.nnet = UViT(**nnet_dict)
         self.nnet.load_state_dict(torch.load("models/uvit_v1.pth", map_location='cpu'))
 
-    def forward(self, x, timesteps, text):
+    def forward(self, x, timesteps, text, text_N, sigma, alpha):
         z, clip_img = split(x)
         t_text = torch.zeros(timesteps.size(0), dtype=torch.int)
         data_type = torch.zeros_like(t_text, dtype=torch.int) + 1
-        text_N = torch.randn_like(text)  # 3 other possible choices
         _z = torch.cat([z, z], dim=0)
         _clip_img = torch.cat([clip_img, clip_img], dim=0)
         _text = torch.cat([text, text_N], dim=0)
@@ -100,7 +103,9 @@ class UViTNet(torch.nn.Module):
         _data_type = torch.cat([data_type, data_type], dim=0)
         z_out, clip_img_out, _ = self.nnet(_z, _clip_img, text=_text, t_img=_t_img, t_text=_t_text, data_type=_data_type)
         x_out = combine(z_out, clip_img_out)
-        return x_out[0] + 7. * (x_out[0] - x_out[1])
+        noise = x_out[0] + 7. * (x_out[0] - x_out[1])
+        x_out = (x - sigma * noise) / alpha
+        return x_out
     
 
 uvit_net = UViTNet()
@@ -108,4 +113,8 @@ uvit_net.eval()
 x = torch.randn((1, 16896), dtype=torch.float32) 
 timesteps = torch.ones((1,), dtype=torch.float32) 
 text = torch.ones((1, 77, 64), dtype=torch.float32)
-torch.onnx.export(uvit_net, (x, timesteps, text), "onnx/uvit.onnx", opset_version=18, input_names=["x", "timesteps", "text"], output_names=["x_out"])
+text_N = torch.ones((1, 77, 64), dtype=torch.float32)
+sigma = torch.ones((1,), dtype=torch.float32)
+alpha = torch.ones((1,), dtype=torch.float32)
+torch.onnx.export(uvit_net, (x, timesteps, text, text_N, sigma, alpha), "onnx/uvit.onnx", opset_version=18, 
+                  input_names=["x", "timesteps", "text", "text_N", "sigma", "alpha"], output_names=["x_out"])
