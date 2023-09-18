@@ -205,6 +205,6 @@ root@trt2023:~/workspace/tensorrt_llm_july-release-v1/examples/gpt#
 [08/22/2023-09:27:00] [TRT-LLM] [I]   rougeLsum : 16.95757748412272
 ```
 
-### 经验与体会（可选）
+### 经验与体会
 
-本次比赛收获很大，开始对大模型仅算是听过，现在算是有了简单认识；也收获了很多TRT的优化经验，比如实现plugin的时候可以考虑到输出的format，适合后续layer的输入format，避免reformatting操作、还有cudaGraph、以及尽量将前后处理吃到TRT中；作为TRT-LLM的尝鲜者，熟悉了API、Plugin的使用，模型的搭建、构建，还是需要花时间摸索的，有点门槛；也有些遗憾没有摸到kv-cache、smooth_quant等，最后还算是完成了比赛吧，unidiffuser整个pipeline获得了2.5倍左右加速。
+本次比赛收获很大，开始对大模型仅算是听过，现在算是有了简单认识；也收获了很多TRT的优化经验，比如实现plugin的时候可以考虑到输出的format，适合后续layer的输入format，避免reformatting操作、还有cudaGraph、以及尽量将前后处理吃到TRT中；作为TRT-LLM的尝鲜者，熟悉了API、Plugin的使用，模型的搭建、构建，还是需要花时间摸索的，有点门槛；也有些遗憾没有摸到kv-cache、smooth_quant等，最后还算是完成了比赛吧，unidiffuser整个pipeline获得了2.5倍左右加速。遗憾的是在A10上调试优化后精度基本ok了，在RTX3060/3080上测试了下发现精度损失很大，逐层调试了一番，怀疑matmul精度有问题，但实在没精力耗在上面了:joy:
