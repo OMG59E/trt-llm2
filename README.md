@@ -136,10 +136,23 @@ TensorRT-LLM的主要主要算子实现在**tensorrt_llm.layers**、以及**tens
 
 - 进一步使用cudaGraph减少kernel的launch开销，这里有坑用cudaGraph的情况下，**nsys profile**会有问题。
 
-- 在完成fp16整个pipeline的优化后，考虑将uvit进行PTQ(因为uvit占据整个timeline的98%，其余收益比较小)，尝试后发现int8会破坏myelin的融合如下的巨大block，反而增加推理时延。
+- 在完成fp16整个pipeline的优化后，考虑将uvit进行PTQ(因为uvit占据整个timeline的98%，其余收益比较小)，通过onnx用trtexec快速尝试后发现int8会破坏myelin的融合如下的巨大block，反而时延有81ms左右增加至144左右。
 
+fp16 部分逐层情况
 ```shell
 [09/10/2023-07:02:34] [I]     3345.99      81.6096      79.3160      99.6   {ForeignNode[UViTNet/CONSTANT_8...UViTNet/ELEMENTWISE_DIV_0]}
+```
+int8 部分逐层情况
+```shell
+[09/18/2023-14:32:57] [I]        0.96       0.0402       0.0399       0.0   Reformatting CopyNode for Input Tensor 0 to reshape_before_/nnet/out_blocks.14/mlp/fc1/MatMul
+[09/18/2023-14:32:57] [I]        8.28       0.3450       0.3256       0.2   /nnet/out_blocks.14/mlp/fc1/MatMul
+[09/18/2023-14:32:57] [I]        4.27       0.1781       0.1684       0.1   PWN(PWN(PWN(PWN(PWN(/nnet/out_blocks.14/mlp/act/Constant_output_0 + ONNXTRT_Broadcast_1713, PWN(/nnet/out_blocks.14/mlp/act/Div)), PWN(/nnet/out_blocks.14/mlp/act/Erf)), PWN(/nnet/out_blocks.14/mlp/act/Constant_1_output_0 + ONNXTRT_Broadcast_1715, PWN(/nnet/out_blocks.14/mlp/act/Add))), PWN(/nnet/out_blocks.14/mlp/act/Mul)), PWN(/nnet/out_blocks.14/mlp/act/Constant_2_output_0 + ONNXTRT_Broadcast_1717, PWN(/nnet/out_blocks.14/mlp/act/Mul_1)))
+[09/18/2023-14:32:57] [I]        8.38       0.3493       0.3292       0.2   /nnet/out_blocks.14/mlp/fc2/MatMul
+[09/18/2023-14:32:57] [I]        6.54       0.2725       0.2714       0.2   {ForeignNode[nnet.out_blocks.14.norm3.weight + ONNXTRT_Broadcast_1723.../nnet/Slice]}
+[09/18/2023-14:32:57] [I]        0.45       0.0189       0.0184       0.0   /nnet/clip_img_out/MatMul
+[09/18/2023-14:32:57] [I]        0.88       0.0368       0.0358       0.0   /nnet/decoder_pred/MatMul
+[09/18/2023-14:32:57] [I]        0.15       0.0062       0.0061       0.0   {ForeignNode[ONNXTRT_castHelper_1825.../Div]}
+[09/18/2023-14:32:57] [I]     3478.70     144.9458     142.6057     100.0   Total
 ```
 
 ### 优化效果
